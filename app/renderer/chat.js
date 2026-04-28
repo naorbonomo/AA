@@ -1,7 +1,7 @@
 (function () {
   /** @typedef {{ ok: boolean, text?: string, error?: string }} ChatIPCResult */
   /** @typedef {{ wallMs: number, total_tokens: number|null, prompt_tokens: number|null, completion_tokens: number|null, reasoning_tokens?: number, msPerToken: number|null, system_fingerprint?: string }} UsageMeta */
-  /** @typedef {{ role: string, content: string, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string }} Row */
+  /** @typedef {{ role: string, content: string, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, source?: "scheduler" }} Row */
 
   const aa = window.aaDesktop;
   if (!aa) {
@@ -181,6 +181,7 @@
       if (typeof m.reasoning === "string" && m.reasoning.length) o.reasoning = m.reasoning;
       if (typeof m.agentTrace === "string" && m.agentTrace.length) o.agentTrace = m.agentTrace;
       if (m.usageMeta && typeof m.usageMeta === "object") o.usageMeta = m.usageMeta;
+      if (m.source === "scheduler") o.source = "scheduler";
       return o;
     });
   }
@@ -198,6 +199,13 @@
     if (role !== "user" && role !== "assistant" && role !== "system") return null;
     /** @type {typeof history[number]} */
     const row = { role, content: typeof o.content === "string" ? o.content : "" };
+    if (o.source === "scheduler") row.source = "scheduler";
+    else if (
+      row.content &&
+      /^\[Scheduled:[^\]]+\]\n\n/.test(row.content)
+    ) {
+      row.source = "scheduler";
+    }
     if (typeof o.reasoning === "string" && o.reasoning.length) row.reasoning = o.reasoning;
     if (typeof o.agentTrace === "string" && o.agentTrace.length) row.agentTrace = o.agentTrace;
     const um = o.usageMeta;
@@ -233,7 +241,7 @@
   function msgElFromRow(m) {
     const r = (m.role || "user").toLowerCase();
     const div = document.createElement("div");
-    div.className = "msg role-" + r;
+    div.className = "msg role-" + r + (m.source === "scheduler" ? " msg--scheduler-push" : "");
     const head = '<div class="role-h">' + esc(r) + "</div>";
     if (r === "assistant" && m.reasoning) {
       const tr = getThinkTier();
@@ -517,6 +525,7 @@
       const trace = formatAgentSteps(po.steps);
       history.push({
         role: "assistant",
+        source: "scheduler",
         content: "[Scheduled: " + title + "]\n\n" + body,
         ...(trace ? { agentTrace: trace } : {}),
       });

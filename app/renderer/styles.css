@@ -15,6 +15,10 @@
   --accent: #6ee7b7;
   --user: #7dd3fc;
   --assistant: #c4b5fd;
+  /* Scheduled / timer-triggered runs — distinct from live chat assistant purple */
+  --scheduler-push: #fbbf24;
+  --scheduler-push-border: rgba(251, 191, 36, 0.45);
+  --scheduler-push-bg: rgba(251, 191, 36, 0.08);
   --hairline: max(1px, 0.06vmin);
   --fs-root: clamp(50%, 2.35vmin, 110%);
   /* Single corner radius for all bordered panels / controls (scales with viewport). */
@@ -509,6 +513,30 @@ body {
   margin: 0;
 }
 
+/* Same accent as chat `.msg--scheduler-push` so list matches pushed runs */
+.settings-card.scheduler-task-card--push {
+  border-color: var(--scheduler-push-border);
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.07) 0%, var(--panel) 100%);
+  box-shadow: inset 0 0 0 max(1px, 0.06vmin) var(--scheduler-push-bg);
+}
+
+.settings-card.scheduler-task-card--push > .settings-card__summary {
+  border-bottom-color: var(--scheduler-push-border);
+  background: rgba(251, 191, 36, 0.05);
+}
+
+.settings-card.scheduler-task-card--push .settings-card__title {
+  color: var(--scheduler-push);
+}
+
+.settings-card.scheduler-task-card--push .settings-card__file {
+  color: rgba(251, 191, 36, 0.88);
+}
+
+.settings-card.scheduler-task-card--push .settings-card__chev {
+  color: var(--scheduler-push);
+}
+
 .scheduler-task-prompt {
   margin: 0 0 1vh;
   padding: 0.85vh 1vw;
@@ -677,6 +705,22 @@ body {
 
 .msg.role-assistant .role-h {
   color: var(--assistant);
+}
+
+/* Assistant bubbles from scheduler engine (not user-sent chat turns) */
+.msg.role-assistant.msg--scheduler-push {
+  border-color: var(--scheduler-push-border);
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.06) 0%, var(--panel) 55%);
+  box-shadow: inset 0 0 0 max(1px, 0.06vmin) var(--scheduler-push-bg);
+}
+
+.msg.role-assistant.msg--scheduler-push .role-h {
+  color: var(--scheduler-push);
+}
+
+.msg.role-assistant.msg--scheduler-push .agent-tool-trace {
+  border-color: var(--scheduler-push-border);
+  color: rgba(251, 191, 36, 0.92);
 }
 
 .msg.pending {

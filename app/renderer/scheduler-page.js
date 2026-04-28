@@ -107,7 +107,7 @@
       }
 
       const det = document.createElement("details");
-      det.className = "settings-card scheduler-task-card";
+      det.className = "settings-card scheduler-task-card scheduler-task-card--push";
 
       const sum = document.createElement("summary");
       sum.className = "settings-card__summary";
