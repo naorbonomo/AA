@@ -34,6 +34,9 @@
   const elMasked = document.getElementById("sec-masked");
   const elSecretsPathInline = document.getElementById("path-secrets-inline");
   const elStatus = document.getElementById("settings-status");
+  const elWhisperSize = document.getElementById("set-whisper-size");
+  const elWhisperQuant = document.getElementById("set-whisper-quantized");
+  const elWhisperMulti = document.getElementById("set-whisper-multilingual");
   const elAppClock = document.getElementById("app-clock-live");
   const elAppClockRegion = document.getElementById("app-clock-region");
   const elAppClockDevice = document.getElementById("app-clock-device");
@@ -319,6 +322,18 @@
       elAgentSystem.value = typeof r.agent.systemPrompt === "string" ? r.agent.systemPrompt : "";
     }
 
+    const sizes = new Set(["tiny", "small", "base", "medium"]);
+    const ws = typeof r.whisper?.modelSize === "string" && sizes.has(r.whisper.modelSize) ? r.whisper.modelSize : "base";
+    if (elWhisperSize instanceof HTMLSelectElement) {
+      elWhisperSize.value = ws;
+    }
+    if (elWhisperQuant instanceof HTMLInputElement) {
+      elWhisperQuant.checked = !!r.whisper?.quantized;
+    }
+    if (elWhisperMulti instanceof HTMLInputElement) {
+      elWhisperMulti.checked = !!r.whisper?.multilingual;
+    }
+
     const presets = Array.isArray(snap.timeZonePresets) ? snap.timeZonePresets : [];
     const uSnap = snap.user && typeof snap.user === "object" ? snap.user : {};
     rebuildTimeZonePresetSelect(presets, uSnap, r);
@@ -432,6 +447,11 @@
         }
         return o;
       })(),
+      whisper: {
+        modelSize: elWhisperSize instanceof HTMLSelectElement ? elWhisperSize.value : "base",
+        quantized: elWhisperQuant instanceof HTMLInputElement ? elWhisperQuant.checked : true,
+        multilingual: elWhisperMulti instanceof HTMLInputElement ? elWhisperMulti.checked : true,
+      },
     });
 
     const pt = {};

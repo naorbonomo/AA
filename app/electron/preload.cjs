@@ -109,7 +109,31 @@ contextBridge.exposeInMainWorld("aaDesktop", {
     ipcRenderer.on("scheduler:job-finished", wrapped);
     return () => ipcRenderer.removeListener("scheduler:job-finished", wrapped);
   },
-  agentChat(messages, onStep, onStreamDelta) {
+  /** `{ pcm: ArrayBuffer, sampleRate, language?, task? }` → `{ ok, text? } | { ok: false, error }`. Uses Whisper settings from disk. */
+  whisperTranscribe(payload) {
+    return ipcRenderer.invoke("whisper:transcribe", payload);
+  },
+  /** @param {(p: unknown) => void} handler @returns {() => void} unsubscribe */
+  onWhisperProgress(handler) {
+    const wrapped = (_e, p) => {
+      if (typeof handler === "function") {
+        try {
+          handler(p);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    };
+    ipcRenderer.on("whisper:progress", wrapped);
+    return () => ipcRenderer.removeListener("whisper:progress", wrapped);
+  },
+  /**
+   * @param {{ role: string, content: string }[]} messages
+   * @param {((p: unknown) => void)|undefined} onStep
+   * @param {((d: unknown) => void)|undefined} onStreamDelta
+   * @param {{ name: string, sampleRate: number, pcm: ArrayBuffer }[]|undefined} stagedAudio — float32 PCM per attached file name
+   */
+  agentChat(messages, onStep, onStreamDelta, stagedAudio) {
     return new Promise((resolve, reject) => {
       const onAgentStep = (_e, payload) => {
         if (typeof onStep === "function") {
@@ -131,8 +155,12 @@ contextBridge.exposeInMainWorld("aaDesktop", {
       };
       ipcRenderer.on("agent:step", onAgentStep);
       ipcRenderer.on("agent:stream-delta", onTok);
+      const payload =
+        Array.isArray(stagedAudio) && stagedAudio.length > 0
+          ? { messages, stagedAudio }
+          : { messages, stagedAudio: [] };
       ipcRenderer
-        .invoke("agent:chat", messages)
+        .invoke("agent:chat", payload)
         .then(resolve)
         .catch(reject)
         .finally(() => {

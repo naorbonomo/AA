@@ -164,7 +164,8 @@ body {
 
 .compose {
   display: flex;
-  gap: 0.6vw;
+  flex-direction: column;
+  gap: 0.5vh;
   padding: 1vh 1.2vw;
   border-top: var(--hairline) solid var(--border);
   background: #0c0c12;
@@ -173,7 +174,56 @@ body {
   min-height: 0;
 }
 
-.compose textarea {
+.compose-row {
+  display: flex;
+  gap: 0.6vw;
+  align-items: flex-end;
+  width: 100%;
+  min-height: 0;
+}
+
+.compose-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.compose-tools__btn {
+  padding: 0.35rem 0.65rem;
+  font-size: 82%;
+  background: var(--panel);
+  border: var(--hairline) solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.compose-tools__btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.compose-tools__btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.compose-tools__status {
+  font-size: 82%;
+  color: var(--muted);
+  min-height: 1.2em;
+}
+
+.compose-attach-list {
+  flex: 1 1 12rem;
+  font-size: 78%;
+  color: var(--muted);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.compose-row textarea {
   flex: 1 1 40%;
   resize: vertical;
   min-height: 6vh;
@@ -188,12 +238,12 @@ body {
   line-height: 1.4;
 }
 
-.compose textarea:focus {
+.compose-row textarea:focus {
   outline: none;
   border-color: var(--accent);
 }
 
-.compose button {
+.compose-row button {
   align-self: flex-end;
   min-width: 12%;
   min-height: 5.5vh;
@@ -206,12 +256,12 @@ body {
   font-size: 90%;
 }
 
-.compose button:hover:not(:disabled) {
+.compose-row button:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.compose button:disabled {
+.compose-row button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }

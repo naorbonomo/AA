@@ -25,8 +25,74 @@
   const elForm = document.getElementById("compose");
   const elInput = document.getElementById("input");
   const elSend = document.getElementById("btn-send");
+  const elAttachFiles = document.getElementById("attach-files");
+  const elBtnAttach = document.getElementById("btn-attach");
+  const elAttachList = document.getElementById("attach-list");
 
   const THINK_TIER_KEY = "aa.thinkingPanelTier";
+
+  /** @type {{ name: string, type: string, ab: ArrayBuffer }[]} */
+  const pendingAttachments = [];
+
+  /**
+   * Float32 PCM per `File.name` for agent `stt`. Kept for Retry until assistant succeeds.
+   * @type {Array<{ name: string, sampleRate: number, pcm: ArrayBuffer }> | null}
+   */
+  let lastTurnStagedAudio = null;
+
+  /** @param {string} name @param {string} type */
+  function isProbablyAudio(name, type) {
+    if (typeof type === "string" && type.startsWith("audio/")) {
+      return true;
+    }
+    return /\.(wav|mp3|m4a|aac|ogg|opus|webm|flac|mp4)$/i.test(name);
+  }
+
+  function renderAttachList() {
+    if (!(elAttachList instanceof HTMLElement)) {
+      return;
+    }
+    if (!pendingAttachments.length) {
+      elAttachList.textContent = "";
+      return;
+    }
+    elAttachList.textContent = pendingAttachments.map((p) => p.name).join(" · ");
+  }
+
+  /**
+   * @param {string} text
+   * @returns {Promise<{ userContent: string, staged: { name: string, sampleRate: number, pcm: ArrayBuffer }[] }>}
+   */
+  async function buildUserMessageAndStaged(text) {
+    const base = typeof text === "string" ? text.trim() : "";
+    const lines = [];
+    /** @type {{ name: string, sampleRate: number, pcm: ArrayBuffer }[]} */
+    const staged = [];
+    const dec = globalThis.aaWhisperDecode;
+    for (const p of pendingAttachments) {
+      lines.push("- " + p.name + " (" + p.type + ")");
+      if (isProbablyAudio(p.name, p.type) && dec && typeof dec.decodeToMonoF32 === "function") {
+        try {
+          const { samples, sampleRate } = await dec.decodeToMonoF32(p.ab);
+          const pcm = samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength);
+          staged.push({ name: p.name, sampleRate, pcm });
+        } catch (_) {
+          /* listed but not staged — tool may error */
+        }
+      }
+    }
+    pendingAttachments.length = 0;
+    renderAttachList();
+    const head =
+      lines.length && !base
+        ? "User attached files (see list below — use stt with exact file_name to transcribe audio to text)."
+        : base;
+    const block =
+      "\n\n---\nAttached files (full names — call stt with file_name matching one line for audio):\n" +
+      lines.join("\n");
+    const userContent = lines.length ? head + block : head;
+    return { userContent, staged };
+  }
 
   /** @param {number} tier 1..3 */
   function thinkModeButtonInner(tier) {
@@ -482,6 +548,25 @@
       if (
         s &&
         typeof s === "object" &&
+        s.kind === "stt" &&
+        s.status === "done"
+      ) {
+        const fn = typeof s.file_name === "string" ? s.file_name : "?";
+        const ok = /** @type {{ ok?: boolean }} */ (s).ok !== false;
+        const pv = typeof s.preview === "string" ? s.preview : "";
+        const err = typeof s.error === "string" ? s.error : "";
+        let line = 'stt "' + (fn.length > 48 ? fn.slice(0, 48) + "…" : fn) + '"' + (ok ? " ✓" : " ✗");
+        if (ok && pv) {
+          line += "\n  " + pv;
+        } else if (!ok && err) {
+          line += "\n  " + err;
+        }
+        bits.push(line);
+        continue;
+      }
+      if (
+        s &&
+        typeof s === "object" &&
         s.kind === "web_search" &&
         s.status === "done"
       ) {
@@ -544,6 +629,15 @@
           if (
             step &&
             typeof step === "object" &&
+            step.kind === "stt" &&
+            step.status === "start" &&
+            typeof step.file_name === "string"
+          ) {
+            pend.setAnswerSearchBanner("stt (transcribing): " + step.file_name);
+          }
+          if (
+            step &&
+            typeof step === "object" &&
             step.kind === "web_search" &&
             step.status === "start" &&
             typeof step.query === "string"
@@ -566,6 +660,7 @@
           }
           scrollMsgsToBottom();
         },
+        lastTurnStagedAudio && lastTurnStagedAudio.length ? lastTurnStagedAudio : [],
       );
 
       const wallMs = Date.now() - t0;
@@ -605,6 +700,7 @@
         ...(trace ? { agentTrace: trace } : {}),
         ...(usageMeta ? { usageMeta } : {}),
       });
+      lastTurnStagedAudio = null;
     } catch (err) {
       pend.remove();
       const errText = err instanceof Error ? err.message : String(err);
@@ -619,10 +715,14 @@
 
   async function onSend() {
     const text = elInput.value.trim();
-    if (!text) return;
+    if (!text && !pendingAttachments.length) {
+      return;
+    }
 
     elInput.value = "";
-    history.push({ role: "user", content: text, atMs: Date.now() });
+    const { userContent, staged } = await buildUserMessageAndStaged(text);
+    lastTurnStagedAudio = staged.length ? staged : null;
+    history.push({ role: "user", content: userContent, atMs: Date.now() });
     await executeAgentChatTurn();
   }
 
@@ -642,9 +742,36 @@
   elInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      onSend();
+      if (elInput.value.trim() || pendingAttachments.length) {
+        void onSend();
+      }
     }
   });
+
+  if (elBtnAttach instanceof HTMLButtonElement && elAttachFiles instanceof HTMLInputElement) {
+    elBtnAttach.addEventListener("click", () => {
+      elAttachFiles.click();
+    });
+    elAttachFiles.addEventListener("change", () => {
+      const picked =
+        elAttachFiles.files && elAttachFiles.files.length ? Array.from(elAttachFiles.files) : [];
+      elAttachFiles.value = "";
+      if (!picked.length) {
+        return;
+      }
+      void (async () => {
+        for (const f of picked) {
+          try {
+            const ab = await f.arrayBuffer();
+            pendingAttachments.push({ name: f.name, type: f.type || "application/octet-stream", ab });
+          } catch (_) {
+            /* skip */
+          }
+        }
+        renderAttachList();
+      })();
+    });
+  }
 
   if (typeof aa.onSchedulerJobFinished === "function") {
     aa.onSchedulerJobFinished((ply) => {

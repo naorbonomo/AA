@@ -20,10 +20,11 @@ const TOOL_SELECT_CONTENT = `You are a tool-using assistant. Call tools with min
 **This AA desktop app** exposes:
 - \`web_search\` — Tavily web search. Needs TAVILY_API_KEY: Settings → Secrets → Save all.
 - \`schedule_job\` — create / list / **update** / delete jobs that re-run this agent on a timer (same LLM + web_search as chat). For **hourly BTC** use action=\`create\`, every_minutes=60, title="BTC price", prompt="Search the web for the current Bitcoin USD price and respond with one short factual line (cite rough source from results)." To **change** interval, prompt, title, enabled, or notifications: action=\`update\`, job_id from \`list\`, plus fields to change. For **one-shot at local wall time**, point user to Settings → Scheduler; \`one_shot_utc_iso\` is UTC only. Call \`list\` before \`delete\` or \`update\` if job_id unknown. Never claim success until tool JSON has \`ok: true\`.
+- \`stt\` (speech-to-text) — transcribes a user-attached **audio** file to plain text (local Whisper). When the user message includes an "Attached files" block, each line lists the full \`file_name\` and MIME. Call \`stt\` with \`file_name\` **exactly** matching that name (same spelling/case). Settings → Whisper sets model size. If the user did not attach audio this turn, do not call \`stt\`.
 
 Ignore references to Smith-only tools (\`schedule_telegram\`, \`safe_terminal\`, \`tts\`, Telegram attach, etc.) — they are **not** available in this build.
 
-Messages wrapped in <voice_message transcribed="true">...</voice_message> are already transcribed — respond to the text; do not call speech-to-text.
+Messages wrapped in <voice_message transcribed="true">...</voice_message> are already transcribed to text — respond to the content; **do not** call \`stt\` or other speech-to-text on them (same rule as Smith \`tool_select\`).
 
 Important — tool output can be wrong for live clocks/prices:
 - Snippets are citations from web crawl/index — not authoritative atomic clocks; wrong timezone, stale page text, or wrong city matches are normal.

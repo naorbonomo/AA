@@ -6,11 +6,19 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, Notification, app, ipcMain } from "electron";
 
 import type { SecretsPayload } from "../../config/secrets_config.js";
-import type { UserAgent, UserAppTime, UserLogging, UserLlm, UserSettings } from "../../config/user-settings.js";
+import type {
+  UserAgent,
+  UserAppTime,
+  UserLogging,
+  UserLlm,
+  UserSettings,
+  UserWhisper,
+} from "../../config/user-settings.js";
 import type { ChatMessage, ChatUsageSnapshot, StreamDelta } from "../../services/llm.js";
 import { chatCompletion, fetchOpenAiCompatibleModelIds, streamChatCompletion } from "../../services/llm.js";
 import { listSystemPromptsMeta } from "../../config/system_prompts.js";
 import { runChatWithWebSearchFromSettings, type AgentStepPayload } from "../../services/agent-runner.js";
+import type { StagedAudioClip } from "../../services/whisper-transcribe-tool.js";
 import { webSearch } from "../../services/web-search.js";
 import {
   getSecretsSnapshot,
@@ -41,6 +49,7 @@ import {
   type UpdateScheduledJobPatch,
 } from "../../services/scheduler-store.js";
 import { runScheduledJobNow, startSchedulerEngine } from "../../services/scheduler-engine.js";
+import { setWhisperCacheDir, transcribePcm } from "../../services/whisper-transformers.js";
 
 const log = getLogger("electron-main");
 
@@ -156,6 +165,65 @@ ipcMain.handle("settings:reload", () => {
   const r = reloadSettingsFromDisk();
   reloadSecretsFromDisk();
   return r;
+});
+
+function pcmPayloadToArrayBuffer(p: unknown): ArrayBuffer | null {
+  if (p instanceof ArrayBuffer) {
+    return p;
+  }
+  if (p instanceof Uint8Array) {
+    const u = new Uint8Array(p.byteLength);
+    u.set(p);
+    return u.buffer;
+  }
+  if (ArrayBuffer.isView(p)) {
+    const v = p as ArrayBufferView;
+    const u = new Uint8Array(v.byteLength);
+    u.set(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+    return u.buffer;
+  }
+  return null;
+}
+
+ipcMain.handle("whisper:transcribe", async (event, raw: unknown) => {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const sr = Number(o.sampleRate);
+  const pcm = pcmPayloadToArrayBuffer(o.pcm);
+  if (!pcm || pcm.byteLength === 0 || !Number.isFinite(sr) || sr <= 0) {
+    return { ok: false as const, error: "pcm (ArrayBuffer) and positive sampleRate required" };
+  }
+  if (pcm.byteLength % 4 !== 0) {
+    return { ok: false as const, error: "pcm byte length must be multiple of 4 (float32)" };
+  }
+  const samples = new Float32Array(pcm);
+  const language = typeof o.language === "string" ? o.language : undefined;
+  const taskRaw = o.task;
+  const task =
+    taskRaw === "translate" || taskRaw === "transcribe" ? taskRaw : undefined;
+  const wc = event.sender;
+  try {
+    const w = getResolvedSettings().whisper;
+    const r = await transcribePcm({
+      samples,
+      sampleRate: sr,
+      whisper: w,
+      language,
+      task,
+      onProgress: (status) => {
+        if (!wc.isDestroyed()) {
+          wc.send("whisper:progress", status);
+        }
+      },
+    });
+    if (r.ok) {
+      return { ok: true as const, text: r.text };
+    }
+    return { ok: false as const, error: r.error };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("whisper:transcribe", msg);
+    return { ok: false as const, error: msg };
+  }
 });
 
 ipcMain.handle("prompts:list", () => ({
@@ -291,15 +359,28 @@ ipcMain.handle("scheduler:runNow", async (_e, id: unknown) => {
 });
 
 /**
- * Agent turn with `web_search` + `schedule_job` tools.
+ * Agent turn with `web_search` + `schedule_job` + `stt` tools.
  * Sends `agent:step` for each tool step, `agent:stream-delta` for token/reasoning deltas. Returns `{ ok, text, steps, usage }`.
  */
-ipcMain.handle("agent:chat", async (event, messages: unknown) => {
-  if (!Array.isArray(messages)) {
-    return { ok: false as const, error: "messages must be an array" };
+ipcMain.handle("agent:chat", async (event, raw: unknown) => {
+  let messagesIn: unknown[] | null = null;
+  let stagedRaw: unknown[] = [];
+  if (Array.isArray(raw)) {
+    messagesIn = raw;
+  } else if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    if (Array.isArray(o.messages)) {
+      messagesIn = o.messages;
+    }
+    if (Array.isArray(o.stagedAudio)) {
+      stagedRaw = o.stagedAudio;
+    }
+  }
+  if (!Array.isArray(messagesIn)) {
+    return { ok: false as const, error: "payload.messages must be an array" };
   }
   const hist: ChatMessage[] = [];
-  for (const m of messages) {
+  for (const m of messagesIn) {
     if (!m || typeof m !== "object") {
       continue;
     }
@@ -310,6 +391,25 @@ ipcMain.handle("agent:chat", async (event, messages: unknown) => {
     }
     hist.push({ role, content: o.content });
   }
+
+  const stagedAudioByFileName = new Map<string, StagedAudioClip>();
+  for (const item of stagedRaw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const it = item as Record<string, unknown>;
+    const name = typeof it.name === "string" ? it.name : "";
+    const sr = Number(it.sampleRate);
+    const pcmBuf = pcmPayloadToArrayBuffer(it.pcm);
+    if (!name || !pcmBuf || pcmBuf.byteLength < 4 || !Number.isFinite(sr) || sr <= 0 || pcmBuf.byteLength % 4 !== 0) {
+      continue;
+    }
+    stagedAudioByFileName.set(name, {
+      samples: new Float32Array(pcmBuf),
+      sampleRate: sr,
+    });
+  }
+
   const wc = event.sender;
   try {
     const out = await runChatWithWebSearchFromSettings(
@@ -324,6 +424,7 @@ ipcMain.handle("agent:chat", async (event, messages: unknown) => {
           wc.send("agent:stream-delta", d);
         }
       },
+      stagedAudioByFileName,
     );
     return {
       ok: true as const,
@@ -493,6 +594,23 @@ function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
     }
   }
 
+  if ("whisper" in o && o.whisper && typeof o.whisper === "object") {
+    const w = o.whisper as Record<string, unknown>;
+    const whisper: Partial<UserWhisper> = {};
+    if (typeof w.modelSize === "string") {
+      whisper.modelSize = w.modelSize.trim() as UserWhisper["modelSize"];
+    }
+    if (typeof w.quantized === "boolean") {
+      whisper.quantized = w.quantized;
+    }
+    if (typeof w.multilingual === "boolean") {
+      whisper.multilingual = w.multilingual;
+    }
+    if (Object.keys(whisper).length) {
+      out.whisper = whisper as UserWhisper;
+    }
+  }
+
   return out;
 }
 
@@ -505,6 +623,7 @@ app.whenReady().then(() => {
   initializeSecretsStore({ userDataDir: ud });
   initializeChatHistoryStore({ userDataDir: ud });
   initializeSchedulerStore({ userDataDir: ud });
+  setWhisperCacheDir(path.join(ud, "whisper-models"));
   log.info("userData", ud);
   log.info("settings file", getSettingsFilePath());
   log.info("scheduler jobs file", getSchedulerJobsFilePath());

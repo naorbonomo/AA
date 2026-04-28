@@ -99,6 +99,37 @@
         <summary class="settings-card__summary">
           <span class="settings-card__chev" aria-hidden="true">▸</span>
           <span class="settings-card__summary-text">
+            <span class="settings-card__title">Whisper (local)</span>
+            <span class="settings-card__file">@xenova/transformers · ONNX</span>
+          </span>
+        </summary>
+        <div class="settings-card__body">
+          <p class="settings-card__meta">
+            Local Whisper backs the agent <code>stt</code> tool when user attaches audio on Chat (transcribe file → text). First run downloads model into app data cache; needs network unless cache warm. English-only uses smaller <code>.en</code> checkpoints when multilingual is off.
+          </p>
+          <label class="field">
+            <span>Model size</span>
+            <select id="set-whisper-size" aria-describedby="hint-whisper-size">
+              <option value="tiny">tiny</option>
+              <option value="small">small</option>
+              <option value="base">base</option>
+              <option value="medium">medium</option>
+            </select>
+          </label>
+          <p id="hint-whisper-size" class="settings-card__meta">
+            Larger = better quality, more RAM and disk. <code>medium</code> uses HF revision <code>no_attentions</code> (Transformers.js default).
+          </p>
+          <div class="field field--row">
+            <label class="check"><input type="checkbox" id="set-whisper-quantized" /> Quantized weights (smaller download)</label>
+            <label class="check"><input type="checkbox" id="set-whisper-multilingual" /> Multilingual (uncheck for English-only .en models)</label>
+          </div>
+        </div>
+      </details>
+
+      <details class="settings-card">
+        <summary class="settings-card__summary">
+          <span class="settings-card__chev" aria-hidden="true">▸</span>
+          <span class="settings-card__summary-text">
             <span class="settings-card__title">Agent</span>
             <span class="settings-card__file">config/agent_config.ts</span>
           </span>

@@ -1,5 +1,7 @@
 /** Nested runtime overrides — aligns with topic `*_config.ts` modules. Supports legacy flat keys on read. */
 
+import type { WhisperModelSize } from "./whisper_config.js";
+
 export type UserLlm = {
   /** Preset id from `LLM_PROVIDERS` (`lm_studio`, `openai`, …). */
   provider?: string;
@@ -30,11 +32,19 @@ export type UserAppTime = {
   regionLabel?: string;
 };
 
+/** Local Whisper (Transformers.js); models load from Hugging Face on first use. */
+export type UserWhisper = {
+  modelSize?: WhisperModelSize;
+  quantized?: boolean;
+  multilingual?: boolean;
+};
+
 export type UserSettings = {
   llm?: UserLlm;
   logging?: UserLogging;
   agent?: UserAgent;
   appTime?: UserAppTime;
+  whisper?: UserWhisper;
 
   /** @deprecated Legacy flat layout — migrated on load. */
   llmBaseUrl?: string;
@@ -74,9 +84,16 @@ export type ResolvedAppTime = {
   deviceTimeZone: string;
 };
 
+export type ResolvedWhisper = {
+  modelSize: WhisperModelSize;
+  quantized: boolean;
+  multilingual: boolean;
+};
+
 export type ResolvedAppSettings = {
   llm: ResolvedLlm;
   logging: ResolvedLogging;
   agent: ResolvedAgent;
   appTime: ResolvedAppTime;
+  whisper: ResolvedWhisper;
 };

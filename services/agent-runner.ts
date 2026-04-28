@@ -1,4 +1,4 @@
-/** Agent loop: `web_search` + `schedule_job` tools + follow-up completions (main process). */
+/** Agent loop: `web_search` + `schedule_job` + `stt` + follow-up completions (main process). */
 
 import { resolveAgentSystemContent } from "../config/system_prompts.js";
 import type { ResolvedAgent } from "../config/user-settings.js";
@@ -6,6 +6,11 @@ import type { ChatMessage, ChatUsageSnapshot, CompletionApiMessage, StreamDelta 
 import { normalizeAssistantContent, streamCompletionPost } from "./llm.js";
 import { executeScheduleJobTool, scheduleJobOpenAiTool } from "./schedule-job-tool.js";
 import { webSearch, webSearchOpenAiTool } from "./web-search.js";
+import {
+  executeSttTool,
+  sttOpenAiTool,
+  type StagedAudioClip,
+} from "./whisper-transcribe-tool.js";
 import { getResolvedSettings } from "./settings-store.js";
 import { getLogger } from "../utils/logger.js";
 
@@ -24,7 +29,17 @@ export type AgentStepPayload =
       /** First-hit preview for logs + UI trace. */
       previewSummary?: string;
     }
-  | { kind: "schedule_job"; status: "done"; action: string; ok: boolean; summary?: string };
+  | { kind: "schedule_job"; status: "done"; action: string; ok: boolean; summary?: string }
+  | { kind: "stt"; status: "start"; file_name: string }
+  | {
+      kind: "stt";
+      status: "done";
+      file_name: string;
+      ok: boolean;
+      /** Short head of transcript for trace. */
+      preview?: string;
+      error?: string;
+    };
 
 function mergeUsage(acc: ChatUsageSnapshot | undefined, next: ChatUsageSnapshot | undefined): ChatUsageSnapshot | undefined {
   if (!next) {
@@ -62,13 +77,15 @@ function parseToolArgs(raw: string | undefined): { query?: string; max_results?:
 }
 
 /**
- * Tool loop: `web_search` + `schedule_job`; streamed completions until assistant returns text or rounds exhausted.
+ * Tool loop: `web_search` + `schedule_job` + `stt`; streamed completions until assistant returns text or rounds exhausted.
  */
 export async function runChatWithWebSearchTool(opts: {
   history: ChatMessage[];
   maxToolRounds: number;
   /** When omitted, reads merged settings once for system preset/override. */
   resolvedAgent?: ResolvedAgent;
+  /** Float32 PCM keyed by exact `File.name` from chat attach; main fills from renderer each turn. */
+  stagedAudioByFileName?: Map<string, StagedAudioClip>;
   onStep?: (p: AgentStepPayload) => void;
   /** Token/reasoning deltas for current assistant round (each completion is streamed). */
   onStreamDelta?: (d: StreamDelta) => void;
@@ -78,7 +95,13 @@ export async function runChatWithWebSearchTool(opts: {
   usage?: ChatUsageSnapshot;
 }> {
   const maxRounds = Math.max(1, Math.min(500, opts.maxToolRounds));
-  const agentResolved = opts.resolvedAgent ?? getResolvedSettings().agent;
+  const settings = getResolvedSettings();
+  const agentResolved = opts.resolvedAgent ?? settings.agent;
+  const staged =
+    opts.stagedAudioByFileName instanceof Map
+      ? opts.stagedAudioByFileName
+      : new Map<string, StagedAudioClip>();
+  const whisperResolved = settings.whisper;
   const systemBody = resolveAgentSystemContent(agentResolved);
   const msgs: CompletionApiMessage[] = [{ role: "system", content: systemBody }];
   for (const m of opts.history) {
@@ -93,7 +116,7 @@ export async function runChatWithWebSearchTool(opts: {
     log.info("agent round", { round });
     const streamed = await streamCompletionPost({
       messages: msgs,
-      tools: [webSearchOpenAiTool, scheduleJobOpenAiTool],
+      tools: [webSearchOpenAiTool, scheduleJobOpenAiTool, sttOpenAiTool],
       tool_choice: "auto",
       onDelta: opts.onStreamDelta,
     });
@@ -118,6 +141,49 @@ export async function runChatWithWebSearchTool(opts: {
       const id = typeof call.id === "string" ? call.id : "";
       const name = call.function?.name?.trim() ?? "";
       const rawArgs = typeof call.function?.arguments === "string" ? call.function.arguments : "{}";
+      if (name === "stt") {
+        const st0: AgentStepPayload = { kind: "stt", status: "start", file_name: "" };
+        try {
+          const pa = JSON.parse(rawArgs) as { file_name?: string; audio_file_name?: string; audio_path?: string };
+          const n = pa.file_name ?? pa.audio_file_name ?? pa.audio_path;
+          if (typeof n === "string") {
+            st0.file_name = n;
+          }
+        } catch {
+          /* keep */
+        }
+        opts.onStep?.(st0);
+        stepsOut.push(st0);
+
+        const result = await executeSttTool({
+          rawArgs: rawArgs,
+          stagedByName: staged,
+          whisper: whisperResolved,
+        });
+        const ok = result.ok === true;
+        let preview: string | undefined;
+        let error: string | undefined;
+        if (ok && "text" in result) {
+          const t = result.text.replace(/\s+/g, " ").trim();
+          preview = t.length > 160 ? `${t.slice(0, 160)}…` : t;
+        } else if (!ok && "error" in result) {
+          error = result.error;
+        }
+        const stepDone: AgentStepPayload = {
+          kind: "stt",
+          status: "done",
+          file_name: st0.file_name || "?",
+          ok,
+          preview,
+          error,
+        };
+        opts.onStep?.(stepDone);
+        stepsOut.push(stepDone);
+        log.info("agent stt tool", { round, ok, file_name: stepDone.file_name });
+        msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(result) });
+        continue;
+      }
+
       if (name === "schedule_job") {
         const result = executeScheduleJobTool(rawArgs);
         const ok = result.ok === true;
@@ -241,12 +307,14 @@ export async function runChatWithWebSearchFromSettings(
   history: ChatMessage[],
   onStep?: (p: AgentStepPayload) => void,
   onStreamDelta?: (d: StreamDelta) => void,
+  stagedAudioByFileName?: Map<string, StagedAudioClip>,
 ): Promise<{ text: string; steps: AgentStepPayload[]; usage?: ChatUsageSnapshot }> {
   const s = getResolvedSettings();
   return runChatWithWebSearchTool({
     history,
     maxToolRounds: s.agent.maxToolRounds,
     resolvedAgent: s.agent,
+    stagedAudioByFileName,
     onStep,
     onStreamDelta,
   });

@@ -20,11 +20,21 @@
     <div class="col-head"><span id="chat-title">Chat</span></div>
     <div id="messages" class="messages" role="log" aria-live="polite"></div>
     <form id="compose" class="compose" autocomplete="off">
-      <textarea id="input" rows="2" placeholder="Message…"></textarea>
-      <button type="submit" id="btn-send">Send</button>
+      <div class="compose-tools">
+        <input type="file" id="attach-files" multiple hidden />
+        <button type="button" class="compose-tools__btn" id="btn-attach" title="Attach files; model can call stt on audio using exact file name">
+          Attach
+        </button>
+        <div id="attach-list" class="compose-attach-list" aria-live="polite"></div>
+      </div>
+      <div class="compose-row">
+        <textarea id="input" rows="2" placeholder="Message…"></textarea>
+        <button type="submit" id="btn-send">Send</button>
+      </div>
     </form>
   </main>
 
+  <script src="./whisper-audio.js"></script>
   <script src="./chat.js"></script>
 </body>
 </html>

@@ -11,16 +11,19 @@ import {
   DEFAULT_AGENT_PROMPT_KEY,
   SYSTEM_PROMPTS,
 } from "../config/system_prompts.js";
+import * as whisperDef from "../config/whisper_config.js";
 import type {
   ResolvedAgent,
   ResolvedAppSettings,
   ResolvedLlm,
   ResolvedLogging,
+  ResolvedWhisper,
   UserAgent,
   UserAppTime,
   UserLlm,
   UserLogging,
   UserSettings,
+  UserWhisper,
 } from "../config/user-settings.js";
 import { mergeResolvedAppTime } from "../utils/app-time.js";
 
@@ -110,11 +113,26 @@ function normalizeDiskShape(raw: unknown): UserSettings {
     }
   }
 
+  const whisper: UserWhisper = {};
+  if (typeof o.whisper === "object" && o.whisper !== null) {
+    const w = o.whisper as Record<string, unknown>;
+    if (typeof w.modelSize === "string") {
+      whisper.modelSize = w.modelSize as UserWhisper["modelSize"];
+    }
+    if (typeof w.quantized === "boolean") {
+      whisper.quantized = w.quantized;
+    }
+    if (typeof w.multilingual === "boolean") {
+      whisper.multilingual = w.multilingual;
+    }
+  }
+
   const out: UserSettings = {};
   if (Object.keys(llm).length) out.llm = llm;
   if (Object.keys(logging).length) out.logging = logging;
   if (Object.keys(agent).length) out.agent = agent;
   if (Object.keys(appTime).length) out.appTime = appTime;
+  if (Object.keys(whisper).length) out.whisper = whisper;
   return out;
 }
 
@@ -185,12 +203,26 @@ function mergeAgent(u: UserAgent | undefined): ResolvedAgent {
   };
 }
 
+function mergeWhisper(u: UserWhisper | undefined): ResolvedWhisper {
+  const x = u ?? {};
+  const sz = x.modelSize;
+  const modelSize = whisperDef.WHISPER_MODEL_SIZES.includes(sz as whisperDef.WhisperModelSize)
+    ? (sz as whisperDef.WhisperModelSize)
+    : whisperDef.WHISPER_DEFAULT_MODEL_SIZE;
+  return {
+    modelSize,
+    quantized: x.quantized ?? whisperDef.WHISPER_DEFAULT_QUANTIZED,
+    multilingual: x.multilingual ?? whisperDef.WHISPER_DEFAULT_MULTILINGUAL,
+  };
+}
+
 function mergeUserWithDefaults(u: UserSettings): ResolvedAppSettings {
   return {
     llm: mergeLlm(u.llm),
     logging: mergeLogging(u.logging),
     agent: mergeAgent(u.agent),
     appTime: mergeResolvedAppTime(u.appTime),
+    whisper: mergeWhisper(u.whisper),
   };
 }
 
@@ -226,6 +258,7 @@ export function saveUserSettingsPatch(patch: Partial<UserSettings>): ResolvedApp
     logging: { ...(cur.logging ?? {}), ...(patch.logging ?? {}) },
     agent: { ...(cur.agent ?? {}), ...(patch.agent ?? {}) },
     appTime: { ...(cur.appTime ?? {}), ...(patch.appTime ?? {}) },
+    whisper: { ...(cur.whisper ?? {}), ...(patch.whisper ?? {}) },
   };
 
   writeUserFileNested(trimEmptyBranches(next));
@@ -255,6 +288,21 @@ function trimEmptyBranches(s: UserSettings): UserSettings {
     }
     if (Object.keys(cleaned).length) {
       out.appTime = cleaned;
+    }
+  }
+  if (s.whisper) {
+    const w: UserWhisper = {};
+    if (whisperDef.WHISPER_MODEL_SIZES.includes(s.whisper.modelSize as whisperDef.WhisperModelSize)) {
+      w.modelSize = s.whisper.modelSize as whisperDef.WhisperModelSize;
+    }
+    if (typeof s.whisper.quantized === "boolean") {
+      w.quantized = s.whisper.quantized;
+    }
+    if (typeof s.whisper.multilingual === "boolean") {
+      w.multilingual = s.whisper.multilingual;
+    }
+    if (Object.keys(w).length) {
+      out.whisper = w;
     }
   }
   return out;
