@@ -496,41 +496,51 @@ body {
   margin-bottom: 0.35em;
 }
 
+/* Scheduler tab: stacked collapsible cards (same <details> pattern as Settings topic cards) */
 .scheduler-list {
   display: flex;
   flex-direction: column;
-  gap: 0.75em;
-  margin: 0.75em 0;
+  gap: 1vh;
+  margin: 0.75em 0 1.25em;
   width: 100%;
 }
 
-.scheduler-job {
-  border: var(--hairline) solid var(--border);
+.scheduler-task-card.settings-card {
+  margin: 0;
+}
+
+.scheduler-task-prompt {
+  margin: 0 0 1vh;
+  padding: 0.85vh 1vw;
+  max-height: min(28vh, 14rem);
+  overflow: auto;
   border-radius: var(--radius);
-  padding: 0.65em 0.85em;
+  border: var(--hairline) solid rgba(88, 88, 110, 0.35);
+  background: rgba(0, 0, 0, 0.2);
+  font: inherit;
   font-size: 88%;
-  background: rgba(0, 0, 0, 0.12);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
 }
 
-.scheduler-job__title {
-  font-weight: 600;
-  margin-bottom: 0.35em;
+.scheduler-task-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 78%;
+  word-break: break-all;
 }
 
-.scheduler-job__row {
-  opacity: 0.9;
-  margin: 0.2em 0;
-  line-height: 1.4;
-}
-
-.scheduler-job__actions {
+.scheduler-task__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5em;
-  margin-top: 0.55em;
+  margin-top: 0.85em;
+  padding-top: 0.75em;
+  border-top: var(--hairline) solid rgba(88, 88, 110, 0.35);
 }
 
-.scheduler-job__actions button {
+.scheduler-task__actions button {
   font-size: 82%;
   padding: 0.45em 0.65em;
   background: var(--panel);
@@ -540,7 +550,7 @@ body {
   cursor: pointer;
 }
 
-.scheduler-job__actions button:hover {
+.scheduler-task__actions button:hover {
   border-color: var(--accent);
   color: var(--accent);
 }

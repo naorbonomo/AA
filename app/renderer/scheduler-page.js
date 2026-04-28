@@ -80,53 +80,95 @@
     if (!jobs.length) {
       const p = document.createElement("p");
       p.className = "settings-card__meta";
-      p.textContent = "No scheduled jobs yet. Add one below or use schedule_job from Chat.";
+      p.textContent = "No scheduled jobs yet. Create them from Chat (schedule_job tool).";
       elSchedList.appendChild(p);
       return;
     }
+    const tz = lastResolvedSnap && lastResolvedSnap.appTime ? lastResolvedSnap.appTime.timeZone : "UTC";
     for (const raw of jobs) {
       if (!raw || typeof raw !== "object") continue;
       const j = /** @type {Record<string, unknown>} */ (raw);
       const id = typeof j.id === "string" ? j.id : "";
       if (!id) continue;
       const title = typeof j.title === "string" ? j.title : "Job";
+      const promptText = typeof j.prompt === "string" ? j.prompt : "";
       const enabled = j.enabled !== false;
       const notify = j.notify !== false;
       const nextMs = typeof j.nextRunAtMs === "number" && Number.isFinite(j.nextRunAtMs) ? j.nextRunAtMs : null;
-      const tz = lastResolvedSnap && lastResolvedSnap.appTime ? lastResolvedSnap.appTime.timeZone : "UTC";
       let nextStr = "—";
       if (nextMs !== null) {
         nextStr = formatInstantInZone(nextMs, tz);
       }
       const lastErr = typeof j.lastError === "string" && j.lastError.length ? j.lastError : "";
+      let lastRunStr = "—";
+      if (typeof j.lastRunAt === "string" && j.lastRunAt.length) {
+        const lm = Date.parse(j.lastRunAt);
+        lastRunStr = Number.isFinite(lm) ? formatInstantInZone(lm, tz) : j.lastRunAt;
+      }
 
-      const box = document.createElement("div");
-      box.className = "scheduler-job";
-      const h = document.createElement("div");
-      h.className = "scheduler-job__title";
-      h.textContent = title + (enabled ? "" : " (off)");
-      box.appendChild(h);
+      const det = document.createElement("details");
+      det.className = "settings-card scheduler-task-card";
 
-      const r1 = document.createElement("div");
-      r1.className = "scheduler-job__row";
-      r1.textContent = formatScheduleLine(j);
-      box.appendChild(r1);
+      const sum = document.createElement("summary");
+      sum.className = "settings-card__summary";
+      const chev = document.createElement("span");
+      chev.className = "settings-card__chev";
+      chev.setAttribute("aria-hidden", "true");
+      chev.textContent = "▸";
+      const sumText = document.createElement("span");
+      sumText.className = "settings-card__summary-text";
+      const titleEl = document.createElement("span");
+      titleEl.className = "settings-card__title";
+      titleEl.textContent = title + (enabled ? "" : " · off");
+      const subEl = document.createElement("span");
+      subEl.className = "settings-card__file";
+      subEl.textContent =
+        formatScheduleLine(j) +
+        " · Next: " +
+        nextStr +
+        (notify ? "" : " · no notify");
+      sumText.appendChild(titleEl);
+      sumText.appendChild(subEl);
+      sum.appendChild(chev);
+      sum.appendChild(sumText);
+      det.appendChild(sum);
 
-      const r2 = document.createElement("div");
-      r2.className = "scheduler-job__row";
-      r2.textContent = "Next run: " + nextStr + (notify ? " · notifications on" : " · notifications off");
-      box.appendChild(r2);
+      const body = document.createElement("div");
+      body.className = "settings-card__body";
+
+      const lbl = document.createElement("p");
+      lbl.className = "settings-card__meta";
+      lbl.style.marginBottom = "0.4vh";
+      lbl.style.fontWeight = "600";
+      lbl.style.color = "var(--muted)";
+      lbl.textContent = "Prompt (each run)";
+      body.appendChild(lbl);
+
+      const pre = document.createElement("pre");
+      pre.className = "scheduler-task-prompt";
+      pre.textContent = promptText || "(empty)";
+      body.appendChild(pre);
+
+      const idRow = document.createElement("p");
+      idRow.className = "settings-card__meta scheduler-task-id";
+      idRow.textContent = "Job id: " + id;
+      body.appendChild(idRow);
+
+      const runRow = document.createElement("p");
+      runRow.className = "settings-card__meta";
+      runRow.textContent = "Last run: " + lastRunStr;
+      body.appendChild(runRow);
 
       if (lastErr) {
-        const rE = document.createElement("div");
-        rE.className = "scheduler-job__row";
+        const rE = document.createElement("p");
+        rE.className = "settings-card__meta";
         rE.style.color = "#fca5a5";
-        rE.textContent = "Last error: " + lastErr.slice(0, 280) + (lastErr.length > 280 ? "…" : "");
-        box.appendChild(rE);
+        rE.textContent = "Last error: " + lastErr.slice(0, 400) + (lastErr.length > 400 ? "…" : "");
+        body.appendChild(rE);
       }
 
       const act = document.createElement("div");
-      act.className = "scheduler-job__actions";
+      act.className = "scheduler-task__actions";
 
       const bRun = document.createElement("button");
       bRun.type = "button";
@@ -173,8 +215,9 @@
       act.appendChild(bToggle);
       act.appendChild(bNotify);
       act.appendChild(bDel);
-      box.appendChild(act);
-      elSchedList.appendChild(box);
+      body.appendChild(act);
+      det.appendChild(body);
+      elSchedList.appendChild(det);
     }
   }
 
