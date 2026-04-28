@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AA · Settings</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="page-settings">
+  <header class="top">
+    <h1>AA</h1>
+    <nav class="nav" aria-label="Pages">
+      <a href="chat.html" class="nav__tab">Chat</a>
+      <a href="settings.html" class="nav__tab is-active" aria-current="page">Settings</a>
+    </nav>
+    <p class="meta">Topic cards · config modules + JSON overrides</p>
+  </header>
+
+  <main class="page page--settings">
+    <div class="col-head"><span>Settings</span></div>
+
+    <div class="settings-scroll">
+      <p class="settings-path" id="settings-path"></p>
+      <p class="hint">
+        Checked-in defaults: <code>AA/config/*_config.ts</code>.
+        LLM/logging/agent overrides: <code id="path-user-settings">…</code>.
+        Secrets as <strong><code>.env</code></strong> — <code id="path-secrets">…</code> — not in git.
+      </p>
+
+      <details class="settings-card" open>
+        <summary class="settings-card__summary">
+          <span class="settings-card__chev" aria-hidden="true">▸</span>
+          <span class="settings-card__summary-text">
+            <span class="settings-card__title">LLM</span>
+            <span class="settings-card__file">config/llm_config.ts</span>
+          </span>
+        </summary>
+        <div class="settings-card__body">
+          <label class="field">
+            <span>Base URL (no trailing slash)</span>
+            <input type="text" id="set-llm-base" spellcheck="false" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Model id</span>
+            <input type="text" id="set-llm-model" spellcheck="false" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Temperature</span>
+            <input type="text" id="set-llm-temp" inputmode="decimal" />
+          </label>
+          <label class="field">
+            <span>HTTP timeout (ms)</span>
+            <input type="text" id="set-llm-timeout" inputmode="numeric" />
+          </label>
+        </div>
+      </details>
+
+      <details class="settings-card">
+        <summary class="settings-card__summary">
+          <span class="settings-card__chev" aria-hidden="true">▸</span>
+          <span class="settings-card__summary-text">
+            <span class="settings-card__title">Logging</span>
+            <span class="settings-card__file">config/logging_config.ts</span>
+          </span>
+        </summary>
+        <div class="settings-card__body">
+          <div class="field field--row">
+            <label class="check"><input type="checkbox" id="set-log-file" /> Log to file</label>
+            <label class="check"><input type="checkbox" id="set-log-console" /> Log to console</label>
+          </div>
+        </div>
+      </details>
+
+      <details class="settings-card">
+        <summary class="settings-card__summary">
+          <span class="settings-card__chev" aria-hidden="true">▸</span>
+          <span class="settings-card__summary-text">
+            <span class="settings-card__title">Agent</span>
+            <span class="settings-card__file">config/agent_config.ts</span>
+          </span>
+        </summary>
+        <div class="settings-card__body">
+          <label class="field">
+            <span>Max tool rounds (future hooks)</span>
+            <input type="text" id="set-agent-rounds" inputmode="numeric" />
+          </label>
+          <label class="field">
+            <span>Session label (optional)</span>
+            <input type="text" id="set-agent-label" spellcheck="false" autocomplete="off" />
+          </label>
+        </div>
+      </details>
+
+      <details class="settings-card settings-card--danger">
+        <summary class="settings-card__summary">
+          <span class="settings-card__chev" aria-hidden="true">▸</span>
+          <span class="settings-card__summary-text">
+            <span class="settings-card__title">Secrets</span>
+            <span class="settings-card__file">config/secrets_config.ts</span>
+          </span>
+        </summary>
+        <div class="settings-card__body">
+          <p class="settings-card__meta" id="secrets-path-box">
+            <strong>Canonical file:</strong>
+            <code id="path-secrets-inline"></code>
+            (<code>TAVILY_API_KEY</code>, <code>OPENAI_API_KEY</code>, <code>TELEGRAM_BOT_TOKEN</code> —
+            echoed into <code>process.env</code> on start &amp; Save all). Typical Electron folders:
+            <span class="settings-card__muted">macOS</span>
+            <code>~/Library/Application Support/aa/</code> · <span class="settings-card__muted">Windows</span>
+            <code>%AppData%/aa/</code> · <span class="settings-card__muted">Linux</span>
+            <code>~/.config/aa/</code> — filename is always <code>.env</code> inside that folder (same path Settings shows beside “Secrets” at top).
+          </p>
+          <p class="settings-card__meta">
+            Legacy one-time migrate: old <code>aa-secrets.json</code> there → renamed <code>aa-secrets.json.migrated</code>; keys live only in <code>.env</code> after that.
+          </p>
+          <p class="settings-card__meta">
+            Tavily signup: <a href="https://tavily.com" rel="noopener noreferrer" target="_blank">tavily.com</a>.
+          </p>
+          <label class="field field--secret-field">
+            <span class="field__label-row">
+              <span class="field__label-main">Tavily API key (web search)</span>
+              <span id="sec-badge-tavily" class="secret-key-indicator" aria-live="polite"></span>
+            </span>
+            <input type="password" id="sec-tavily" spellcheck="false" autocomplete="off" placeholder="paste key, then Save all below" />
+          </label>
+          <label class="field field--secret-field">
+            <span class="field__label-row">
+              <span class="field__label-main">Telegram bot token (optional)</span>
+              <span id="sec-badge-telegram" class="secret-key-indicator" aria-live="polite"></span>
+            </span>
+            <input type="password" id="sec-telegram" spellcheck="false" autocomplete="off" placeholder="paste to replace" />
+          </label>
+          <label class="field field--secret-field">
+            <span class="field__label-row">
+              <span class="field__label-main">OpenAI / API key (optional)</span>
+              <span id="sec-badge-openai" class="secret-key-indicator" aria-live="polite"></span>
+            </span>
+            <input type="password" id="sec-openai" spellcheck="false" autocomplete="off" placeholder="paste to replace" />
+          </label>
+          <p class="settings-card__meta" id="sec-masked"></p>
+          <div class="settings-card__danger-actions">
+            <button type="button" class="btn-danger" id="btn-clear-secrets-tavily">Remove Tavily key</button>
+            <button type="button" class="btn-danger" id="btn-clear-secrets-tg">Remove Telegram token</button>
+            <button type="button" class="btn-danger" id="btn-clear-secrets-key">Remove API key</button>
+          </div>
+        </div>
+      </details>
+
+      <div class="settings-actions">
+        <button type="button" id="btn-settings-save">Save all</button>
+        <button type="button" id="btn-settings-reset">Reset non-secrets to config defaults</button>
+        <button type="button" id="btn-settings-reload">Reload from disk</button>
+      </div>
+      <p class="settings-hint-save settings-card__meta" id="hint-save-all">
+        After pasting a key, click <strong>Save all</strong> (bottom): writes overrides JSON + refreshes secrets <code>.env</code> immediately.
+      </p>
+      <p class="settings-status" id="settings-status" aria-live="polite"></p>
+    </div>
+  </main>
+
+  <script src="./settings-page.js"></script>
+</body>
+</html>

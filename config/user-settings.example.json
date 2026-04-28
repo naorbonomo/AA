@@ -1,0 +1,16 @@
+{
+  "llm": {
+    "baseUrl": "http://192.168.0.166:1234",
+    "model": "qwen3.6-35b-a3b-turboquant-mlx",
+    "temperature": 0.2,
+    "httpTimeoutMs": 3600000
+  },
+  "logging": {
+    "logToFile": true,
+    "logToConsole": true
+  },
+  "agent": {
+    "maxToolRounds": 20,
+    "sessionLabel": ""
+  }
+}

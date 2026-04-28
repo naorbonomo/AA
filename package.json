@@ -1,0 +1,25 @@
+{
+  "name": "aa",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/app/electron/main.js",
+  "scripts": {
+    "build": "rimraf dist && tsc -p tsconfig.json",
+    "start": "electron .",
+    "cli": "tsx cli.ts",
+    "smoke:tavily": "tsx tests/tavily-web-search.smoke.ts",
+    "electron:packed": "npm run build && electron .",
+    "dev": "npm run build && concurrently -k \"tsc -w -p tsconfig.json\" \"wait-on dist/app/electron/main.js && electron .\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "concurrently": "^9.1.2",
+    "electron": "^33.2.1",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "wait-on": "^8.0.1"
+  },
+  "dependencies": {}
+}

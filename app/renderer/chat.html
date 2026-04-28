@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AA · Chat</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="page-chat">
+  <header class="top">
+    <h1>AA</h1>
+    <nav class="nav" aria-label="Pages">
+      <a href="chat.html" class="nav__tab is-active" aria-current="page">Chat</a>
+      <a href="settings.html" class="nav__tab">Settings</a>
+    </nav>
+    <p class="meta">Local LM Studio · <code>/v1/chat/completions</code></p>
+  </header>
+
+  <main class="page">
+    <div class="col-head"><span id="chat-title">Chat</span></div>
+    <div id="messages" class="messages" role="log" aria-live="polite"></div>
+    <form id="compose" class="compose" autocomplete="off">
+      <textarea id="input" rows="2" placeholder="Message…"></textarea>
+      <button type="submit" id="btn-send">Send</button>
+    </form>
+  </main>
+
+  <script src="./chat.js"></script>
+</body>
+</html>

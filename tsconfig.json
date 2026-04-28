@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "strict": true,
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["cli.ts", "config/**/*.ts", "services/**/*.ts", "utils/**/*.ts", "app/electron/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist", "app/renderer"]
+}
