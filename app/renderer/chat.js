@@ -1,7 +1,7 @@
 (function () {
   /** @typedef {{ ok: boolean, text?: string, error?: string }} ChatIPCResult */
   /** @typedef {{ wallMs: number, total_tokens: number|null, prompt_tokens: number|null, completion_tokens: number|null, reasoning_tokens?: number, msPerToken: number|null, system_fingerprint?: string }} UsageMeta */
-  /** @typedef {{ role: string, content: string, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, source?: "scheduler", errReply?: boolean }} Row */
+  /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, source?: "scheduler", errReply?: boolean }} Row */
 
   const aa = window.aaDesktop;
 
@@ -171,6 +171,43 @@
       .replace(/>/g, "&gt;");
   }
 
+  /** @param {string} roleLower user|assistant|system @param {number|undefined} atMs */
+  function roleHeadHtml(roleLower, atMs) {
+    const label = esc(roleLower);
+    let timeHtml = "";
+    if (typeof atMs === "number" && Number.isFinite(atMs)) {
+      const d = new Date(atMs);
+      let iso = "";
+      try {
+        iso = d.toISOString();
+      } catch {
+        iso = "";
+      }
+      let disp = "";
+      try {
+        disp = d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+      } catch {
+        disp = iso || String(atMs);
+      }
+      if (disp) {
+        timeHtml =
+          '<time class="msg__time"' +
+          (iso ? ' datetime="' + esc(iso) + '"' : "") +
+          ">" +
+          esc(disp) +
+          "</time>";
+      }
+    }
+    return (
+      '<div class="role-h">' +
+      '<span class="role-h__label">' +
+      label +
+      "</span>" +
+      timeHtml +
+      "</div>"
+    );
+  }
+
   /** #messages only scroll surface — flush layout then pin end (streaming + tool steps). */
   function scrollMsgsToBottom() {
     requestAnimationFrame(() => {
@@ -186,6 +223,7 @@
     return history.map((m) => {
       /** @type {Record<string, unknown>} */
       const o = { role: m.role, content: m.content };
+      if (typeof m.atMs === "number" && Number.isFinite(m.atMs)) o.atMs = m.atMs;
       if (typeof m.reasoning === "string" && m.reasoning.length) o.reasoning = m.reasoning;
       if (typeof m.agentTrace === "string" && m.agentTrace.length) o.agentTrace = m.agentTrace;
       if (m.usageMeta && typeof m.usageMeta === "object") o.usageMeta = m.usageMeta;
@@ -216,6 +254,11 @@
       row.source = "scheduler";
     }
     if (typeof o.reasoning === "string" && o.reasoning.length) row.reasoning = o.reasoning;
+    if (typeof o.atMs === "number" && Number.isFinite(o.atMs)) row.atMs = o.atMs;
+    else if (typeof o.at === "string" && o.at.length) {
+      const parsed = Date.parse(o.at);
+      if (!Number.isNaN(parsed)) row.atMs = parsed;
+    }
     if (typeof o.agentTrace === "string" && o.agentTrace.length) row.agentTrace = o.agentTrace;
     const um = o.usageMeta;
     if (um && typeof um === "object") {
@@ -264,7 +307,7 @@
       r +
       (m.source === "scheduler" ? " msg--scheduler-push" : "") +
       (r === "assistant" && m.errReply ? " error" : "");
-    const head = '<div class="role-h">' + esc(r) + "</div>";
+    const head = roleHeadHtml(r, m.atMs);
     if (r === "assistant" && m.reasoning) {
       const tr = getThinkTier();
       const lbl = tr === 1 ? "thinking …" : "thinking";
@@ -327,12 +370,13 @@
 
   /** Pending agent turn — same layout as streamed thinking + answer (not plain "Working…"). */
   function pendingAssistAgent() {
+    const pendingAt = Date.now();
     const tr = getThinkTier();
     const lbl = tr === 1 ? "thinking …" : "thinking";
     const wrap = document.createElement("div");
     wrap.className = "msg role-assistant pending";
     wrap.innerHTML =
-      '<div class="role-h">assistant</div>' +
+      roleHeadHtml("assistant", pendingAt) +
       '<div class="msg-stream">' +
       '<aside class="msg-stream__think think-tier--' +
       tr +
@@ -410,6 +454,7 @@
     history.push({
       role: "assistant",
       source: "scheduler",
+      atMs: Date.now(),
       content: "[Scheduled: " + title + "]\n\n" + body,
       ...(trace ? { agentTrace: trace } : {}),
       ...(usageMeta ? { usageMeta } : {}),
@@ -549,6 +594,7 @@
 
       history.push({
         role: "assistant",
+        atMs: Date.now(),
         content: res.text || "",
         ...(streamedReasoningAcc.trim() ? { reasoning: streamedReasoningAcc } : {}),
         ...(trace ? { agentTrace: trace } : {}),
@@ -557,7 +603,7 @@
     } catch (err) {
       pend.remove();
       const errText = err instanceof Error ? err.message : String(err);
-      history.push({ role: "assistant", content: errText, errReply: true });
+      history.push({ role: "assistant", atMs: Date.now(), content: errText, errReply: true });
     } finally {
       agentBusy = false;
       elSend.disabled = false;
@@ -571,7 +617,7 @@
     if (!text) return;
 
     elInput.value = "";
-    history.push({ role: "user", content: text });
+    history.push({ role: "user", content: text, atMs: Date.now() });
     await executeAgentChatTurn();
   }
 

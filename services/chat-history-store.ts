@@ -37,6 +37,8 @@ export type ChatHistoryUsageMeta = {
 export type ChatHistoryRow = {
   role: string;
   content: string;
+  /** Wall-clock ms when row was created (renderer); shown in Chat tab header. */
+  atMs?: number;
   reasoning?: string;
   agentTrace?: string;
   usageMeta?: ChatHistoryUsageMeta;
@@ -59,6 +61,9 @@ function normalizeRow(raw: unknown): ChatHistoryRow | null {
   if (role !== "user" && role !== "assistant" && role !== "system") return null;
   const content = clampStr(o.content, MAX_FIELD);
   const row: ChatHistoryRow = { role, content };
+  if (typeof o.atMs === "number" && Number.isFinite(o.atMs)) {
+    row.atMs = Math.floor(o.atMs);
+  }
   if (typeof o.reasoning === "string" && o.reasoning.length) {
     row.reasoning = clampStr(o.reasoning, MAX_FIELD);
   }

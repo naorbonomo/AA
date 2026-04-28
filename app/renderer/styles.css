@@ -755,11 +755,28 @@ body {
 }
 
 .msg .role-h {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.35em 1em;
+  margin-bottom: 0.55vh;
   font-size: 72%;
+  font-weight: 600;
+}
+
+.msg .role-h__label {
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  margin-bottom: 0.55vh;
-  font-weight: 600;
+}
+
+.msg .msg__time {
+  margin-left: auto;
+  font-size: 92%;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--muted);
 }
 
 .msg.role-user {
@@ -767,7 +784,7 @@ body {
   border-color: #1e3a5f;
 }
 
-.msg.role-user .role-h {
+.msg.role-user .role-h__label {
   color: var(--user);
 }
 
@@ -803,7 +820,7 @@ body {
   overflow-wrap: anywhere;
 }
 
-.msg.role-assistant .role-h {
+.msg.role-assistant .role-h__label {
   color: var(--assistant);
 }
 
@@ -814,7 +831,7 @@ body {
   box-shadow: inset 0 0 0 max(1px, 0.06vmin) var(--scheduler-push-bg);
 }
 
-.msg.role-assistant.msg--scheduler-push .role-h {
+.msg.role-assistant.msg--scheduler-push .role-h__label {
   color: var(--scheduler-push);
 }
 
@@ -848,7 +865,7 @@ body {
   box-sizing: border-box;
 }
 
-.msg--streaming .role-h {
+.msg--streaming .role-h__label {
   color: var(--assistant);
 }
 
