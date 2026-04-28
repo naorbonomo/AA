@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import * as agentDef from "../config/agent_config.js";
+import { APP_TIME_ZONE_PRESETS } from "../config/app_time_config.js";
 import * as llmDef from "../config/llm_config.js";
 import * as loggingDef from "../config/logging_config.js";
 import {
@@ -16,10 +17,12 @@ import type {
   ResolvedLlm,
   ResolvedLogging,
   UserAgent,
+  UserAppTime,
   UserLlm,
   UserLogging,
   UserSettings,
 } from "../config/user-settings.js";
+import { mergeResolvedAppTime } from "../utils/app-time.js";
 
 let storeUserDataDir: string | null = null;
 let cache: ResolvedAppSettings | null = null;
@@ -96,10 +99,22 @@ function normalizeDiskShape(raw: unknown): UserSettings {
     logging.logToConsole = o.logToConsole;
   }
 
+  const appTime: UserAppTime = {};
+  if (typeof o.appTime === "object" && o.appTime !== null) {
+    const at = o.appTime as Record<string, unknown>;
+    if (typeof at.timeZone === "string") {
+      appTime.timeZone = at.timeZone;
+    }
+    if (typeof at.regionLabel === "string") {
+      appTime.regionLabel = at.regionLabel;
+    }
+  }
+
   const out: UserSettings = {};
   if (Object.keys(llm).length) out.llm = llm;
   if (Object.keys(logging).length) out.logging = logging;
   if (Object.keys(agent).length) out.agent = agent;
+  if (Object.keys(appTime).length) out.appTime = appTime;
   return out;
 }
 
@@ -169,6 +184,7 @@ function mergeUserWithDefaults(u: UserSettings): ResolvedAppSettings {
     llm: mergeLlm(u.llm),
     logging: mergeLogging(u.logging),
     agent: mergeAgent(u.agent),
+    appTime: mergeResolvedAppTime(u.appTime),
   };
 }
 
@@ -203,6 +219,7 @@ export function saveUserSettingsPatch(patch: Partial<UserSettings>): ResolvedApp
     llm: { ...(cur.llm ?? {}), ...(patch.llm ?? {}) },
     logging: { ...(cur.logging ?? {}), ...(patch.logging ?? {}) },
     agent: { ...(cur.agent ?? {}), ...(patch.agent ?? {}) },
+    appTime: { ...(cur.appTime ?? {}), ...(patch.appTime ?? {}) },
   };
 
   writeUserFileNested(trimEmptyBranches(next));
@@ -222,6 +239,18 @@ function trimEmptyBranches(s: UserSettings): UserSettings {
   if (s.agent && Object.keys(s.agent).length > 0) {
     out.agent = s.agent;
   }
+  if (s.appTime) {
+    const cleaned: UserAppTime = {};
+    if (typeof s.appTime.timeZone === "string" && s.appTime.timeZone.trim()) {
+      cleaned.timeZone = s.appTime.timeZone.trim();
+    }
+    if (typeof s.appTime.regionLabel === "string" && s.appTime.regionLabel.trim()) {
+      cleaned.regionLabel = s.appTime.regionLabel.trim();
+    }
+    if (Object.keys(cleaned).length) {
+      out.appTime = cleaned;
+    }
+  }
   return out;
 }
 
@@ -235,11 +264,13 @@ export function getSettingsSnapshot(): {
   resolved: ResolvedAppSettings;
   filePath: string;
   user: UserSettings;
+  timeZonePresets: typeof APP_TIME_ZONE_PRESETS;
 } {
   const user = normalizeDiskShape(readUserFileRaw());
   return {
     resolved: getResolvedSettings(),
     filePath: getSettingsFilePath(),
     user,
+    timeZonePresets: [...APP_TIME_ZONE_PRESETS],
   };
 }

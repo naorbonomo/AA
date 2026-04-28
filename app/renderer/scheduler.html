@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AA · Scheduler</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="page-scheduler page--settings">
+  <header class="top">
+    <h1>AA</h1>
+    <nav class="nav" aria-label="Pages">
+      <a href="chat.html" class="nav__tab">Chat</a>
+      <a href="scheduler.html" class="nav__tab is-active" aria-current="page">Scheduler</a>
+      <a href="settings.html" class="nav__tab">Settings</a>
+    </nav>
+    <p class="meta">Scheduled agent jobs · LLM + web search each run · single chat transcript</p>
+  </header>
+
+  <main class="page page--settings">
+    <div class="col-head"><span>Scheduler</span></div>
+
+    <div class="settings-scroll">
+      <p class="hint">
+        Jobs run in the main process (same agent as <a href="chat.html">Chat</a>). Results append to chat + optional desktop notification.
+        One-shot times use <strong>App time</strong> from <a href="settings.html">Settings</a> (not browser local).
+      </p>
+      <p class="settings-card__meta" id="scheduler-app-clock-hint" aria-live="polite"></p>
+      <p class="settings-card__meta" id="scheduler-path-hint"></p>
+      <p class="settings-card__meta" id="scheduler-notify-hint"></p>
+
+      <div id="scheduler-list" class="scheduler-list" aria-live="polite"></div>
+
+      <div class="scheduler-form scheduler-form--page">
+        <h2 class="scheduler-form__heading">New job</h2>
+        <label class="field">
+          <span>Title</span>
+          <input type="text" id="sched-title" spellcheck="false" placeholder="BTC check" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>Prompt (each run)</span>
+          <textarea id="sched-prompt" rows="3" spellcheck="false" placeholder="Check current BTC price via web search; one-line summary."></textarea>
+        </label>
+        <label class="field">
+          <span>Schedule</span>
+          <select id="sched-kind" aria-label="Schedule type">
+            <option value="interval">Repeating (every N minutes)</option>
+            <option value="once">One time (app clock)</option>
+          </select>
+        </label>
+        <label class="field" id="sched-row-interval">
+          <span>Every (minutes)</span>
+          <input type="text" id="sched-interval" inputmode="numeric" value="60" />
+        </label>
+        <label class="field" id="sched-row-once" hidden>
+          <span>Run at (wall time in app timezone)</span>
+          <input type="datetime-local" id="sched-once" />
+        </label>
+        <label class="check"><input type="checkbox" id="sched-notify" checked /> Desktop notification when done</label>
+        <button type="button" id="btn-scheduler-add">Add job</button>
+      </div>
+
+      <p class="settings-status" id="scheduler-status" aria-live="polite"></p>
+    </div>
+  </main>
+
+  <script src="./scheduler-page.js"></script>
+</body>
+</html>

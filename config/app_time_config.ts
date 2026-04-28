@@ -1,0 +1,30 @@
+/** Defaults and preset IANA zones for the app-wide clock (one timezone for scheduling + display). */
+
+/** Preset list: stable IANA id + short city/region label for the settings picker. */
+export const APP_TIME_ZONE_PRESETS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "Pacific/Honolulu", label: "Honolulu" },
+  { id: "America/Los_Angeles", label: "Los Angeles" },
+  { id: "America/Denver", label: "Denver" },
+  { id: "America/Chicago", label: "Chicago" },
+  { id: "America/New_York", label: "New York" },
+  { id: "America/Toronto", label: "Toronto" },
+  { id: "America/Mexico_City", label: "Mexico City" },
+  { id: "America/Sao_Paulo", label: "São Paulo" },
+  { id: "Europe/London", label: "London" },
+  { id: "Europe/Paris", label: "Paris" },
+  { id: "Europe/Berlin", label: "Berlin" },
+  { id: "Europe/Madrid", label: "Madrid" },
+  { id: "Europe/Rome", label: "Rome" },
+  { id: "Europe/Athens", label: "Athens" },
+  { id: "Europe/Moscow", label: "Moscow" },
+  { id: "Asia/Dubai", label: "Dubai" },
+  { id: "Asia/Kolkata", label: "Mumbai / India" },
+  { id: "Asia/Bangkok", label: "Bangkok" },
+  { id: "Asia/Singapore", label: "Singapore" },
+  { id: "Asia/Shanghai", label: "Shanghai" },
+  { id: "Asia/Tokyo", label: "Tokyo" },
+  { id: "Asia/Seoul", label: "Seoul" },
+  { id: "Australia/Sydney", label: "Sydney" },
+  { id: "Pacific/Auckland", label: "Auckland" },
+  { id: "UTC", label: "UTC" },
+];

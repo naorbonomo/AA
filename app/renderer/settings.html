@@ -12,6 +12,7 @@
     <h1>AA</h1>
     <nav class="nav" aria-label="Pages">
       <a href="chat.html" class="nav__tab">Chat</a>
+      <a href="scheduler.html" class="nav__tab">Scheduler</a>
       <a href="settings.html" class="nav__tab is-active" aria-current="page">Settings</a>
     </nav>
     <p class="meta">Topic cards · config modules + JSON overrides</p>
@@ -102,6 +103,45 @@
           </label>
         </div>
       </details>
+
+      <details class="settings-card" open>
+        <summary class="settings-card__summary">
+          <span class="settings-card__chev" aria-hidden="true">▸</span>
+          <span class="settings-card__summary-text">
+            <span class="settings-card__title">App time</span>
+            <span class="settings-card__file">utils/app-time.ts</span>
+          </span>
+        </summary>
+        <div class="settings-card__body">
+          <p class="settings-card__meta">
+            One clock for AA: scheduler one-shot times and labels use this timezone (stored instants are still UTC ISO in JSON). Pick a city/region preset or a custom IANA id.
+          </p>
+          <div class="app-clock-panel" aria-live="polite">
+            <div id="app-clock-live" class="app-clock-live"></div>
+            <div id="app-clock-region" class="app-clock-region"></div>
+            <div id="app-clock-device" class="settings-card__meta"></div>
+          </div>
+          <label class="field">
+            <span>Timezone preset</span>
+            <select id="app-tz-preset" aria-describedby="hint-app-tz"></select>
+          </label>
+          <p class="settings-card__meta" id="hint-app-tz">
+            <strong>Device</strong> follows this computer’s zone. Custom IANA examples: <code>America/Argentina/Buenos_Aires</code>, <code>Asia/Jerusalem</code>.
+          </p>
+          <label class="field" id="app-tz-custom-row" hidden>
+            <span>Custom IANA timezone</span>
+            <input type="text" id="app-tz-custom" spellcheck="false" autocomplete="off" placeholder="e.g. Europe/Warsaw" />
+          </label>
+          <label class="field">
+            <span>Region label (optional)</span>
+            <input type="text" id="app-region-label" spellcheck="false" autocomplete="off" placeholder="Leave empty for auto (zone name + IANA)" />
+          </label>
+        </div>
+      </details>
+
+      <p class="hint">
+        <strong>Scheduler</strong> — manage jobs on the <a href="scheduler.html">Scheduler</a> tab (list, add, run now). Jobs share the same chat history (no separate conversations yet).
+      </p>
 
       <details class="settings-card settings-card--danger">
         <summary class="settings-card__summary">

@@ -15,7 +15,9 @@ AA/
 │   └── renderer/              # Static HTML/JS/CSS; no Webpack/bundler (not processed by `tsc`)
 │       ├── chat.html          # Main chat window: loads chat.js
 │       ├── chat.js            # Implements: streaming chat (/v1/chat/completions), "thinking" panel, conversation UI
-│       ├── settings.html      # Loads settings-page.js; topic cards; nav tabs to switch between chat/settings
+│       ├── scheduler.html     # Scheduler tab: jobs list + add form (shared single chat history)
+│       ├── scheduler-page.js  # Scheduler UI logic
+│       ├── settings.html      # Loads settings-page.js; topic cards; nav Chat / Scheduler / Settings
 │       ├── settings-page.js   # Settings UI logic
 │       └── styles.css         # Responsive CSS, hairlines via `max(1px, …)` rule in file header
 ├── config/                    # LLM, agent, logging, web search, user-secrets, user-settings
@@ -27,15 +29,25 @@ AA/
 │   ├── logging.ts
 │   ├── logging_config.ts
 │   ├── secrets_config.ts
+│   ├── app_time_config.ts     # Preset IANA zones for Settings “App time” picker
 │   ├── user-settings.example.json
 │   ├── user-settings.ts
 │   └── web_search_config.ts
 ├── services/
 │   ├── llm.ts                 # OpenAI-compatible: chatCompletion/streamChatCompletion
+│   ├── agent-runner.ts        # Tool loop: web_search + streamed completions
+│   ├── chat-history-store.ts  # Persist chat JSON under userData
+│   ├── scheduler-store.ts     # CRUD `aa-scheduled-jobs.json` (once / interval)
+│   ├── scheduler-engine.ts    # Tick → runChatWithWebSearch + Notification + IPC
+│   ├── schedule-job-tool.ts     # OpenAI `schedule_job` function + handler (agent chat)
 │   ├── settings-store.ts      # Settings merge/load/save (Electron vs CLI)
 │   ├── secrets-store.ts       # Handles .env, migration from legacy aa-secrets.json, getSecretsFilePath()
 │   └── web-search.ts          # Tavily API integration (web_search tool)
 ├── utils/                     # Utility functions/helpers
+│   ├── app-time.ts            # One app clock: merge zone/label, wall↔UTC for scheduler
+│   ├── env-file.ts
+│   ├── logger.ts
+│   └── index.ts
 ├── cli.ts                     # Headless CLI: optional `tsx cli.ts` (or `npm run cli`)
 ├── package.json
 ├── tsconfig.json
@@ -49,6 +61,7 @@ AA/
 - `AA/user-settings.json` — non-secret overrides next to CLI when not using Electron `userData`.
 - `userData/.env` (Electron) or `AA/.env` (CLI) — secrets (`TAVILY_API_KEY`, …); legacy `aa-secrets.json` migrated once to `.env`.
 - `logs/aa.log` — when file logging enabled (dir name from config).
+- `userData/aa-scheduled-jobs.json` — scheduler CRUD (Electron); CLI cwd `AA/` fallback.
 
 ---
 
@@ -93,6 +106,10 @@ Legacy flat keys in older JSON shapes are normalized when read (user settings on
 | `services/settings-store.ts` | Merge defaults + user JSON; paths for Electron vs CLI; get/snapshot/save/reload/reset. |
 | `services/web-search.ts` | Agent `web_search` tool: Tavily REST + optional `tavily_short_answer`; key from `getSecrets().tavily_api_key` / `TAVILY_API_KEY`. |
 | `services/secrets-store.ts` | Load/save canonical `.env`; legacy JSON migration; hydrate `process.env`; masked snapshot for renderer. |
+| `services/chat-history-store.ts` | Read/write `aa-chat-history.json` transcript. |
+| `services/scheduler-store.ts` | Scheduled jobs: create/update/delete/list; `computeNextRunAtMs` / `isJobDue`. |
+| `services/scheduler-engine.ts` | `startSchedulerEngine()` poll + `runScheduledJobNow`; desktop `Notification` + `scheduler:job-finished`. |
+| `services/agent-runner.ts` | `runChatWithWebSearchFromSettings` used by chat IPC and scheduler. |
 
 `utils/env-file.ts` — parse/format dotenv fragments. **`utils/logger.ts`** reads resolved logging flags + paths.
 
@@ -106,6 +123,14 @@ Legacy flat keys in older JSON shapes are normalized when read (user settings on
 | `lm:chat-stream` | send ← renderer start | Main runs `streamChatCompletion`; emits `lm:chat-stream-delta`, then `lm:chat-stream-done` or `lm:chat-stream-error`. Wrapped as **`chatStream(messages, { onDelta })`** in preload. |
 | `settings:get` / `:save` / `:reset` / `:reload` | invoke | Nested settings snapshots + patch save. |
 | `secrets:get` / `:save` | invoke | Masked read; selective patch write. |
+| `app-time:wall-to-utc-iso` | invoke | `{ wall, timeZone? }` → UTC ISO for stored `runAtIso`. |
+| `app-time:utc-to-wall` | invoke | `{ ms, timeZone? }` → `YYYY-MM-DDTHH:mm` in app zone. |
+| `scheduler:list` | invoke | `{ ok, jobs, filePath, notifySupported }` — jobs include `nextRunAtMs`. |
+| `scheduler:create` | invoke | `{ title?, prompt, notify?, schedule }` → `{ ok, job? }`. |
+| `scheduler:update` | invoke | `{ id, patch }` — patch: title, prompt, enabled, notify, schedule. |
+| `scheduler:delete` | invoke | job id string. |
+| `scheduler:runNow` | invoke | Run job immediately (main process agent). |
+| `scheduler:job-finished` | main → renderer | Payload: `{ id, title, prompt, ok, text?, error?, steps?, usage? }` — chat appends assistant row. |
 
 ---
 

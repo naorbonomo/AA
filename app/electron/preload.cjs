@@ -68,6 +68,43 @@ contextBridge.exposeInMainWorld("aaDesktop", {
     return ipcRenderer.invoke("tools:webSearch", payload);
   },
   /** Agent with `web_search` tool; `onStep({ kind, status, ... })`, optional `onStreamDelta({ reasoning?, content? })`. */
+  schedulerList() {
+    return ipcRenderer.invoke("scheduler:list");
+  },
+  schedulerCreate(payload) {
+    return ipcRenderer.invoke("scheduler:create", payload);
+  },
+  schedulerUpdate(payload) {
+    return ipcRenderer.invoke("scheduler:update", payload);
+  },
+  schedulerDelete(id) {
+    return ipcRenderer.invoke("scheduler:delete", id);
+  },
+  schedulerRunNow(id) {
+    return ipcRenderer.invoke("scheduler:runNow", id);
+  },
+  /** `{ wall: 'YYYY-MM-DDTHH:mm', timeZone? }` → `{ ok, iso }` UTC instant for scheduler storage. */
+  appTimeWallToUtcIso(payload) {
+    return ipcRenderer.invoke("app-time:wall-to-utc-iso", payload);
+  },
+  /** `{ ms, timeZone? }` → `{ ok, wall }` for datetime-local in app zone. */
+  appTimeUtcToWall(payload) {
+    return ipcRenderer.invoke("app-time:utc-to-wall", payload);
+  },
+  /** @param {(p: unknown) => void} handler @returns {() => void} unsubscribe */
+  onSchedulerJobFinished(handler) {
+    const wrapped = (_e, p) => {
+      if (typeof handler === "function") {
+        try {
+          handler(p);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    };
+    ipcRenderer.on("scheduler:job-finished", wrapped);
+    return () => ipcRenderer.removeListener("scheduler:job-finished", wrapped);
+  },
   agentChat(messages, onStep, onStreamDelta) {
     return new Promise((resolve, reject) => {
       const onAgentStep = (_e, payload) => {

@@ -475,6 +475,146 @@ body {
   width: 100%;
 }
 
+.app-clock-panel {
+  margin: 0.75em 0 1em;
+  padding: 0.75em 1em;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.app-clock-live {
+  font-size: max(14px, 1.05rem);
+  font-weight: 600;
+  line-height: 1.35;
+  margin-bottom: 0.35em;
+}
+
+.app-clock-region {
+  font-size: 88%;
+  color: var(--accent);
+  margin-bottom: 0.35em;
+}
+
+.scheduler-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+  margin: 0.75em 0;
+  width: 100%;
+}
+
+.scheduler-job {
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.65em 0.85em;
+  font-size: 88%;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.scheduler-job__title {
+  font-weight: 600;
+  margin-bottom: 0.35em;
+}
+
+.scheduler-job__row {
+  opacity: 0.9;
+  margin: 0.2em 0;
+  line-height: 1.4;
+}
+
+.scheduler-job__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-top: 0.55em;
+}
+
+.scheduler-job__actions button {
+  font-size: 82%;
+  padding: 0.45em 0.65em;
+  background: var(--panel);
+  border: var(--hairline) solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.scheduler-job__actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.scheduler-form button#btn-scheduler-add {
+  margin-top: 0.5em;
+  background: var(--panel);
+  border: var(--hairline) solid var(--border);
+  color: var(--text);
+  padding: 0.65em 1em;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 88%;
+}
+
+.scheduler-form button#btn-scheduler-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.scheduler-form--page {
+  margin-top: 1.25em;
+  padding-top: 1em;
+  border-top: var(--hairline) solid rgba(88, 88, 110, 0.35);
+}
+
+.scheduler-form__heading {
+  margin: 0 0 0.65em;
+  font-size: 92%;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.hint a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.hint a:hover {
+  text-decoration: underline;
+}
+
+.field textarea,
+.field select {
+  width: 100%;
+  max-width: 100%;
+  background: var(--panel);
+  border: var(--hairline) solid var(--border);
+  color: var(--text);
+  padding: 0.8vh 0.95vw;
+  border-radius: var(--radius);
+  font: inherit;
+  min-height: 4.5vh;
+  box-sizing: border-box;
+}
+
+.field textarea {
+  min-height: 6em;
+  resize: vertical;
+}
+
+.field input[type="datetime-local"] {
+  width: 100%;
+  max-width: 100%;
+  background: var(--panel);
+  border: var(--hairline) solid var(--border);
+  color: var(--text);
+  padding: 0.8vh 0.95vw;
+  border-radius: var(--radius);
+  font: inherit;
+}
+
 .msg {
   max-width: 94%;
   min-width: 0;

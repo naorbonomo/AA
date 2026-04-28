@@ -1,9 +1,10 @@
-/** Agent loop: `web_search` tool + follow-up completions (main process; Python Smith `quick_web_search` analogue). */
+/** Agent loop: `web_search` + `schedule_job` tools + follow-up completions (main process). */
 
 import { resolveAgentSystemContent } from "../config/system_prompts.js";
 import type { ResolvedAgent } from "../config/user-settings.js";
 import type { ChatMessage, ChatUsageSnapshot, CompletionApiMessage, StreamDelta } from "./llm.js";
 import { normalizeAssistantContent, streamCompletionPost } from "./llm.js";
+import { executeScheduleJobTool, scheduleJobOpenAiTool } from "./schedule-job-tool.js";
 import { webSearch, webSearchOpenAiTool } from "./web-search.js";
 import { getResolvedSettings } from "./settings-store.js";
 import { getLogger } from "../utils/logger.js";
@@ -22,7 +23,8 @@ export type AgentStepPayload =
       scrapeBackend?: string;
       /** First-hit preview for logs + UI trace. */
       previewSummary?: string;
-    };
+    }
+  | { kind: "schedule_job"; status: "done"; action: string; ok: boolean; summary?: string };
 
 function mergeUsage(acc: ChatUsageSnapshot | undefined, next: ChatUsageSnapshot | undefined): ChatUsageSnapshot | undefined {
   if (!next) {
@@ -60,7 +62,7 @@ function parseToolArgs(raw: string | undefined): { query?: string; max_results?:
 }
 
 /**
- * Tool loop with `web_search` only: streamed completions until assistant returns text (no tool_calls) or rounds exhausted.
+ * Tool loop: `web_search` + `schedule_job`; streamed completions until assistant returns text or rounds exhausted.
  */
 export async function runChatWithWebSearchTool(opts: {
   history: ChatMessage[];
@@ -91,7 +93,7 @@ export async function runChatWithWebSearchTool(opts: {
     log.info("agent round", { round });
     const streamed = await streamCompletionPost({
       messages: msgs,
-      tools: [webSearchOpenAiTool],
+      tools: [webSearchOpenAiTool, scheduleJobOpenAiTool],
       tool_choice: "auto",
       onDelta: opts.onStreamDelta,
     });
@@ -116,6 +118,45 @@ export async function runChatWithWebSearchTool(opts: {
       const id = typeof call.id === "string" ? call.id : "";
       const name = call.function?.name?.trim() ?? "";
       const rawArgs = typeof call.function?.arguments === "string" ? call.function.arguments : "{}";
+      if (name === "schedule_job") {
+        const result = executeScheduleJobTool(rawArgs);
+        const ok = result.ok === true;
+        let schedAction = "?";
+        try {
+          const p = JSON.parse(rawArgs) as { action?: string };
+          if (typeof p.action === "string") schedAction = p.action;
+        } catch {
+          /* keep */
+        }
+        let summary: string | undefined;
+        if (ok && typeof result.job === "object" && result.job !== null) {
+          const j = result.job as { id?: string; title?: string };
+          if (schedAction === "update") {
+            summary = `updated ${j.id ?? "?"} (${j.title ?? ""})`;
+          } else {
+            summary = `created ${j.id ?? "?"} (${j.title ?? ""})`;
+          }
+        } else if (ok && Array.isArray(result.jobs)) {
+          summary = `list ${result.jobs.length} job(s)`;
+        } else if (ok && typeof result.deleted === "string") {
+          summary = `deleted ${result.deleted}`;
+        } else if (typeof result.error === "string") {
+          summary = result.error;
+        }
+        const step: AgentStepPayload = {
+          kind: "schedule_job",
+          status: "done",
+          action: schedAction,
+          ok,
+          summary,
+        };
+        opts.onStep?.(step);
+        stepsOut.push(step);
+        log.info("agent schedule_job tool", { round, ok, summary });
+        msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(result) });
+        continue;
+      }
+
       if (name !== "web_search") {
         const errText = JSON.stringify({ ok: false, error: `Unknown tool: ${name}` });
         msgs.push({ role: "tool", tool_call_id: id, content: errText });

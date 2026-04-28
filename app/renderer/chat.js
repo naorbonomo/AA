@@ -339,6 +339,13 @@
     if (!Array.isArray(steps)) return "";
     const bits = [];
     for (const s of steps) {
+      if (s && typeof s === "object" && s.kind === "schedule_job" && s.status === "done") {
+        const act = typeof s.action === "string" ? s.action : "?";
+        const ok = s.ok !== false;
+        const sum = typeof s.summary === "string" ? s.summary : "";
+        bits.push("schedule_job " + act + (ok ? " ✓" : " ✗") + (sum ? " · " + sum : ""));
+        continue;
+      }
       if (
         s &&
         typeof s === "object" &&
@@ -496,6 +503,26 @@
       onSend();
     }
   });
+
+  if (typeof aa.onSchedulerJobFinished === "function") {
+    aa.onSchedulerJobFinished((ply) => {
+      if (!ply || typeof ply !== "object") return;
+      const po = /** @type {Record<string, unknown>} */ (ply);
+      const title = typeof po.title === "string" ? po.title : "Scheduled";
+      const ok = po.ok === true;
+      let body = "";
+      if (ok && typeof po.text === "string") body = po.text;
+      else if (typeof po.error === "string") body = po.error;
+      else body = ok ? "" : "error";
+      const trace = formatAgentSteps(po.steps);
+      history.push({
+        role: "assistant",
+        content: "[Scheduled: " + title + "]\n\n" + body,
+        ...(trace ? { agentTrace: trace } : {}),
+      });
+      render();
+    });
+  }
 
   void (async function loadHistoryAndRender() {
     if (typeof aa.chatHistoryGet === "function") {

@@ -3,10 +3,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BrowserWindow, app, ipcMain } from "electron";
+import { BrowserWindow, Notification, app, ipcMain } from "electron";
 
 import type { SecretsPayload } from "../../config/secrets_config.js";
-import type { UserAgent, UserLogging, UserLlm, UserSettings } from "../../config/user-settings.js";
+import type { UserAgent, UserAppTime, UserLogging, UserLlm, UserSettings } from "../../config/user-settings.js";
 import type { ChatMessage, ChatUsageSnapshot, StreamDelta } from "../../services/llm.js";
 import { chatCompletion, streamChatCompletion } from "../../services/llm.js";
 import { listSystemPromptsMeta } from "../../config/system_prompts.js";
@@ -28,7 +28,19 @@ import {
   saveUserSettingsPatch,
 } from "../../services/settings-store.js";
 import { getLogger } from "../../utils/logger.js";
+import { utcMsToWallDatetimeLocalValue, wallDateTimeInZoneToUtcMs } from "../../utils/app-time.js";
 import { initializeChatHistoryStore, readChatHistory, writeChatHistory } from "../../services/chat-history-store.js";
+import {
+  initializeSchedulerStore,
+  createScheduledJob,
+  deleteScheduledJob,
+  getSchedulerJobsFilePath,
+  listScheduledJobsWithMeta,
+  updateScheduledJob,
+  type CreateScheduledJobInput,
+  type UpdateScheduledJobPatch,
+} from "../../services/scheduler-store.js";
+import { runScheduledJobNow, startSchedulerEngine } from "../../services/scheduler-engine.js";
 
 const log = getLogger("electron-main");
 
@@ -156,9 +168,120 @@ ipcMain.handle("secrets:save", (_e, patch: unknown) =>
   saveSecretsPatch(sanitizeSecretsPatch(patch as Partial<SecretsPayload>)),
 );
 
+ipcMain.handle("scheduler:list", () => {
+  try {
+    return {
+      ok: true as const,
+      jobs: listScheduledJobsWithMeta(),
+      filePath: getSchedulerJobsFilePath(),
+      notifySupported: Notification.isSupported(),
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("scheduler:list", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("scheduler:create", (_e, raw: unknown) => {
+  try {
+    const input = sanitizeSchedulerCreate(raw);
+    const r = createScheduledJob(input);
+    if (!r.ok) {
+      return { ok: false as const, error: r.error };
+    }
+    return { ok: true as const, job: r.job };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("scheduler:create", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("scheduler:update", (_e, raw: unknown) => {
+  try {
+    const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const id = typeof o.id === "string" ? o.id.trim() : "";
+    const patch = sanitizeSchedulerPatch(o.patch);
+    const r = updateScheduledJob(id, patch);
+    if (!r.ok) {
+      return { ok: false as const, error: r.error };
+    }
+    return { ok: true as const, job: r.job };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("scheduler:update", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("scheduler:delete", (_e, id: unknown) => {
+  try {
+    const jid = typeof id === "string" ? id.trim() : "";
+    const r = deleteScheduledJob(jid);
+    if (!r.ok) {
+      return { ok: false as const, error: r.error };
+    }
+    return { ok: true as const };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("scheduler:delete", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("app-time:wall-to-utc-iso", (_e, raw: unknown) => {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const wall = typeof o.wall === "string" ? o.wall.trim() : "";
+  const tzRaw = typeof o.timeZone === "string" ? o.timeZone.trim() : "";
+  const tz = tzRaw.length > 0 ? tzRaw : getResolvedSettings().appTime.timeZone;
+  if (!wall) {
+    return { ok: false as const, error: "wall required" };
+  }
+  try {
+    const ms = wallDateTimeInZoneToUtcMs(wall, tz);
+    return { ok: true as const, iso: new Date(ms).toISOString() };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("app-time:utc-to-wall", (_e, raw: unknown) => {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const ms = Number(o.ms);
+  const tzRaw = typeof o.timeZone === "string" ? o.timeZone.trim() : "";
+  const tz = tzRaw.length > 0 ? tzRaw : getResolvedSettings().appTime.timeZone;
+  if (!Number.isFinite(ms)) {
+    return { ok: false as const, error: "ms required" };
+  }
+  try {
+    const wall = utcMsToWallDatetimeLocalValue(ms, tz);
+    return { ok: true as const, wall };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("scheduler:runNow", async (_e, id: unknown) => {
+  try {
+    const jid = typeof id === "string" ? id.trim() : "";
+    const r = await runScheduledJobNow(jid);
+    if (!r.ok) {
+      return { ok: false as const, error: r.error };
+    }
+    return { ok: true as const };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("scheduler:runNow", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
 /**
- * Agent turn with `web_search` tool (Tavily; key under Settings → Secrets).
- * Sends `agent:step` before/after each search, `agent:stream-delta` for token/reasoning deltas. Returns `{ ok, text, steps, usage }`.
+ * Agent turn with `web_search` + `schedule_job` tools.
+ * Sends `agent:step` for each tool step, `agent:stream-delta` for token/reasoning deltas. Returns `{ ok, text, steps, usage }`.
  */
 ipcMain.handle("agent:chat", async (event, messages: unknown) => {
   if (!Array.isArray(messages)) {
@@ -229,6 +352,65 @@ function sanitizeSecretsPatch(patch: Partial<SecretsPayload>): Partial<SecretsPa
   return out;
 }
 
+function sanitizeSchedulerCreate(raw: unknown): CreateScheduledJobInput {
+  if (!raw || typeof raw !== "object") {
+    return { prompt: "", schedule: { kind: "interval", intervalMinutes: 60 } };
+  }
+  const o = raw as Record<string, unknown>;
+  const prompt = typeof o.prompt === "string" ? o.prompt : "";
+  const title = typeof o.title === "string" ? o.title : undefined;
+  const enabled = typeof o.enabled === "boolean" ? o.enabled : undefined;
+  const notify = typeof o.notify === "boolean" ? o.notify : undefined;
+  const scheduleRaw = o.schedule;
+  let schedule: CreateScheduledJobInput["schedule"] = { kind: "interval", intervalMinutes: 60 };
+  if (scheduleRaw && typeof scheduleRaw === "object") {
+    const s = scheduleRaw as Record<string, unknown>;
+    if (s.kind === "once" && typeof s.runAtIso === "string") {
+      schedule = { kind: "once", runAtIso: s.runAtIso };
+    } else if (s.kind === "interval") {
+      const n = Number(s.intervalMinutes);
+      schedule = {
+        kind: "interval",
+        intervalMinutes: Number.isFinite(n) ? n : 60,
+      };
+    }
+  }
+  return { prompt, title, enabled, notify, schedule };
+}
+
+function sanitizeSchedulerPatch(raw: unknown): UpdateScheduledJobPatch {
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  const o = raw as Record<string, unknown>;
+  const patch: UpdateScheduledJobPatch = {};
+  if (typeof o.title === "string") {
+    patch.title = o.title;
+  }
+  if (typeof o.prompt === "string") {
+    patch.prompt = o.prompt;
+  }
+  if (typeof o.enabled === "boolean") {
+    patch.enabled = o.enabled;
+  }
+  if (typeof o.notify === "boolean") {
+    patch.notify = o.notify;
+  }
+  if (o.schedule && typeof o.schedule === "object") {
+    const s = o.schedule as Record<string, unknown>;
+    if (s.kind === "once" && typeof s.runAtIso === "string") {
+      patch.schedule = { kind: "once", runAtIso: s.runAtIso };
+    } else if (s.kind === "interval") {
+      const n = Number(s.intervalMinutes);
+      patch.schedule = {
+        kind: "interval",
+        intervalMinutes: Number.isFinite(n) ? n : 60,
+      };
+    }
+  }
+  return patch;
+}
+
 function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
   if (!raw || typeof raw !== "object") {
     return {};
@@ -273,16 +455,36 @@ function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
     if (Object.keys(agent).length) out.agent = agent as UserAgent;
   }
 
+  if ("appTime" in o && o.appTime && typeof o.appTime === "object") {
+    const a = o.appTime as Record<string, unknown>;
+    const appTime: Partial<UserAppTime> = {};
+    if (typeof a.timeZone === "string") {
+      appTime.timeZone = a.timeZone.trim();
+    }
+    if (typeof a.regionLabel === "string") {
+      appTime.regionLabel = a.regionLabel.trim();
+    }
+    if (Object.keys(appTime).length) {
+      out.appTime = appTime as UserAppTime;
+    }
+  }
+
   return out;
 }
 
 app.whenReady().then(() => {
+  if (process.platform === "win32") {
+    app.setAppUserModelId("com.github.aa.desktop");
+  }
   const ud = app.getPath("userData");
   initializeSettingsStore({ userDataDir: ud });
   initializeSecretsStore({ userDataDir: ud });
   initializeChatHistoryStore({ userDataDir: ud });
+  initializeSchedulerStore({ userDataDir: ud });
   log.info("userData", ud);
   log.info("settings file", getSettingsFilePath());
+  log.info("scheduler jobs file", getSchedulerJobsFilePath());
+  startSchedulerEngine();
 
   createWindow();
 });

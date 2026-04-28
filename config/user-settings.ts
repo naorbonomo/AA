@@ -21,10 +21,18 @@ export type UserAgent = {
   systemPrompt?: string;
 };
 
+/** App-wide clock: scheduling + labels use this IANA zone (empty = device zone). */
+export type UserAppTime = {
+  timeZone?: string;
+  /** Optional display line; when empty, derived from zone (generic name + IANA). */
+  regionLabel?: string;
+};
+
 export type UserSettings = {
   llm?: UserLlm;
   logging?: UserLogging;
   agent?: UserAgent;
+  appTime?: UserAppTime;
 
   /** @deprecated Legacy flat layout — migrated on load. */
   llmBaseUrl?: string;
@@ -55,8 +63,17 @@ export type ResolvedAgent = {
   systemPrompt?: string;
 };
 
+/** Single resolved clock for the app (always valid IANA + label). */
+export type ResolvedAppTime = {
+  timeZone: string;
+  regionLabel: string;
+  /** OS-reported IANA zone (for “device” line in UI). */
+  deviceTimeZone: string;
+};
+
 export type ResolvedAppSettings = {
   llm: ResolvedLlm;
   logging: ResolvedLogging;
   agent: ResolvedAgent;
+  appTime: ResolvedAppTime;
 };
