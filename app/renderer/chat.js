@@ -1,9 +1,12 @@
 (function () {
   /** @typedef {{ ok: boolean, text?: string, error?: string }} ChatIPCResult */
   /** @typedef {{ wallMs: number, total_tokens: number|null, prompt_tokens: number|null, completion_tokens: number|null, reasoning_tokens?: number, msPerToken: number|null, system_fingerprint?: string }} UsageMeta */
-  /** @typedef {{ role: string, content: string, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, source?: "scheduler" }} Row */
+  /** @typedef {{ role: string, content: string, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, source?: "scheduler", errReply?: boolean }} Row */
 
   const aa = window.aaDesktop;
+
+  /** True while agent request running — hides Retry on orphan user bubble. */
+  let agentBusy = false;
   if (!aa) {
     document.body.innerHTML =
       '<p style="color:#fca5a5;padding:1.2vmin;font-family:system-ui">Preload failed — aaDesktop unavailable.</p>';
@@ -12,6 +15,11 @@
 
   /** @type {Row[]} */
   const history = [];
+
+  /** False until disk history applied — avoids wiping scheduler rows appended during `await chatHistoryGet()`. */
+  let historyHydrated = false;
+  /** @type {unknown[]} */
+  const schedulerPending = [];
 
   const elMsgs = document.getElementById("messages");
   const elForm = document.getElementById("compose");
@@ -182,6 +190,7 @@
       if (typeof m.agentTrace === "string" && m.agentTrace.length) o.agentTrace = m.agentTrace;
       if (m.usageMeta && typeof m.usageMeta === "object") o.usageMeta = m.usageMeta;
       if (m.source === "scheduler") o.source = "scheduler";
+      if (m.errReply === true) o.errReply = true;
       return o;
     });
   }
@@ -221,7 +230,16 @@
       if (typeof u.reasoning_tokens === "number") row.usageMeta.reasoning_tokens = u.reasoning_tokens;
       if (typeof u.system_fingerprint === "string") row.usageMeta.system_fingerprint = u.system_fingerprint;
     }
+    if (o.errReply === true) row.errReply = true;
     return row;
+  }
+
+  /** Last row is user and no agent turn running — needs Retry (persisted crash/skip or fresh fail before assistant row). */
+  function orphanUserNeedsRetry() {
+    if (agentBusy) return false;
+    if (!history.length) return false;
+    const last = history[history.length - 1];
+    return last.role === "user";
   }
 
   function render() {
@@ -231,17 +249,21 @@
       return;
     }
     elMsgs.innerHTML = "";
-    for (const m of history) {
-      elMsgs.appendChild(msgElFromRow(m));
+    for (let i = 0; i < history.length; i += 1) {
+      elMsgs.appendChild(msgElFromRow(history[i], i));
     }
     scrollMsgsToBottom();
     persistHistory();
   }
 
-  function msgElFromRow(m) {
+  function msgElFromRow(m, index) {
     const r = (m.role || "user").toLowerCase();
     const div = document.createElement("div");
-    div.className = "msg role-" + r + (m.source === "scheduler" ? " msg--scheduler-push" : "");
+    div.className =
+      "msg role-" +
+      r +
+      (m.source === "scheduler" ? " msg--scheduler-push" : "") +
+      (r === "assistant" && m.errReply ? " error" : "");
     const head = '<div class="role-h">' + esc(r) + "</div>";
     if (r === "assistant" && m.reasoning) {
       const tr = getThinkTier();
@@ -271,6 +293,25 @@
         "</div></div>";
     } else {
       div.innerHTML = head + '<div class="body">' + esc(m.content) + "</div>";
+      if (
+        r === "user" &&
+        orphanUserNeedsRetry() &&
+        typeof index === "number" &&
+        index === history.length - 1
+      ) {
+        const row = document.createElement("div");
+        row.className = "msg-user-actions";
+        const rb = document.createElement("button");
+        rb.type = "button";
+        rb.className = "btn-msg-retry";
+        rb.textContent = "Retry";
+        rb.setAttribute("aria-label", "Retry sending this message");
+        rb.addEventListener("click", () => {
+          void executeAgentChatTurn();
+        });
+        row.appendChild(rb);
+        div.appendChild(row);
+      }
     }
     if (r === "assistant" && m.agentTrace) {
       const tr = document.createElement("div");
@@ -342,6 +383,40 @@
     };
   }
 
+  /**
+   * @param {unknown} ply scheduler IPC payload
+   * @param {boolean} [silent] if true, skip `render()` (batch flush calls `render` once)
+   */
+  function applySchedulerFinished(ply, silent) {
+    if (!ply || typeof ply !== "object") return;
+    const po = /** @type {Record<string, unknown>} */ (ply);
+    const title = typeof po.title === "string" ? po.title : "Scheduled";
+    const ok = po.ok === true;
+    let body = "";
+    if (ok && typeof po.text === "string") body = po.text;
+    else if (typeof po.error === "string") body = po.error;
+    else body = ok ? "" : "error";
+    const trace = formatAgentSteps(po.steps);
+    const usageRaw =
+      po.usage !== null && po.usage !== undefined && typeof po.usage === "object"
+        ? /** @type {Record<string, unknown>} */ (po.usage)
+        : null;
+    const usageMeta = usageRaw
+      ? buildUsageMeta({
+          wallMs: 0,
+          usage: usageRaw,
+        })
+      : undefined;
+    history.push({
+      role: "assistant",
+      source: "scheduler",
+      content: "[Scheduled: " + title + "]\n\n" + body,
+      ...(trace ? { agentTrace: trace } : {}),
+      ...(usageMeta ? { usageMeta } : {}),
+    });
+    if (!silent) render();
+  }
+
   /** @param {unknown} steps */
   function formatAgentSteps(steps) {
     if (!Array.isArray(steps)) return "";
@@ -386,18 +461,18 @@
     return bits.join(" · ");
   }
 
-  async function onSend() {
-    const text = elInput.value.trim();
-    if (!text) return;
+  /** Re-run agent for current transcript when last row is `user` (new send or Retry). */
+  async function executeAgentChatTurn() {
+    if (agentBusy) return;
+    if (!history.length || history[history.length - 1].role !== "user") return;
 
-    elInput.value = "";
-    history.push({ role: "user", content: text });
+    agentBusy = true;
+    elSend.disabled = true;
     render();
 
     const pend = pendingAssistAgent();
     elMsgs.appendChild(pend.el);
     scrollMsgsToBottom();
-    elSend.disabled = true;
 
     const payloads = history.map((h) => ({
       role: h.role === "assistant" ? "assistant" : h.role === "system" ? "system" : "user",
@@ -479,17 +554,25 @@
         ...(trace ? { agentTrace: trace } : {}),
         ...(usageMeta ? { usageMeta } : {}),
       });
-
-      render();
     } catch (err) {
       pend.remove();
       const errText = err instanceof Error ? err.message : String(err);
-      elMsgs.appendChild(msgElFromRow({ role: "assistant", content: errText }));
-      scrollMsgsToBottom();
+      history.push({ role: "assistant", content: errText, errReply: true });
+    } finally {
+      agentBusy = false;
+      elSend.disabled = false;
+      render();
+      elInput.focus();
     }
+  }
 
-    elSend.disabled = false;
-    elInput.focus();
+  async function onSend() {
+    const text = elInput.value.trim();
+    if (!text) return;
+
+    elInput.value = "";
+    history.push({ role: "user", content: text });
+    await executeAgentChatTurn();
   }
 
   elMsgs.addEventListener("click", (e) => {
@@ -514,22 +597,11 @@
 
   if (typeof aa.onSchedulerJobFinished === "function") {
     aa.onSchedulerJobFinished((ply) => {
-      if (!ply || typeof ply !== "object") return;
-      const po = /** @type {Record<string, unknown>} */ (ply);
-      const title = typeof po.title === "string" ? po.title : "Scheduled";
-      const ok = po.ok === true;
-      let body = "";
-      if (ok && typeof po.text === "string") body = po.text;
-      else if (typeof po.error === "string") body = po.error;
-      else body = ok ? "" : "error";
-      const trace = formatAgentSteps(po.steps);
-      history.push({
-        role: "assistant",
-        source: "scheduler",
-        content: "[Scheduled: " + title + "]\n\n" + body,
-        ...(trace ? { agentTrace: trace } : {}),
-      });
-      render();
+      if (!historyHydrated) {
+        schedulerPending.push(ply);
+        return;
+      }
+      applySchedulerFinished(ply);
     });
   }
 
@@ -546,6 +618,11 @@
         }
       } catch (_) {}
     }
+    historyHydrated = true;
+    for (const p of schedulerPending) {
+      applySchedulerFinished(p, true);
+    }
+    schedulerPending.length = 0;
     render();
     syncThinkPanelsToTier(getThinkTier());
     elInput.focus();

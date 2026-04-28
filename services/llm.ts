@@ -1,10 +1,97 @@
-/** OpenAI `POST /v1/chat/completions` — URLs from settings; optional Bearer from `secrets-store`. */
+/** OpenAI `POST /v1/chat/completions` — URLs from settings; Bearer from `bearerTokenForLlm(provider)` in secrets-store. */
 
-import { getSecrets } from "./secrets-store.js";
+import { bearerTokenForLlm } from "./secrets-store.js";
 import { getResolvedSettings } from "./settings-store.js";
 import { getLogger } from "../utils/logger.js";
 
 const log = getLogger("llm");
+
+/** Cerebras `gpt-oss-*`: match public curl (`max_tokens`, `top_p`, `reasoning_effort`). Temperature stays from resolved settings. */
+function cerebrasChatExtras(provider: string, model: string): Record<string, unknown> {
+  if (provider !== "cerebras") return {};
+  if (!model.includes("gpt-oss")) return {};
+  return {
+    reasoning_effort: "medium",
+    max_tokens: 32768,
+    top_p: 1,
+  };
+}
+
+/** Turn JSON error bodies into clearer thrown strings (model_not_found, etc.). */
+function llmHttpErrorText(status: number, raw: string): string {
+  const slice = raw.slice(0, 500).trim();
+  try {
+    const j = JSON.parse(raw) as {
+      message?: string;
+      code?: string;
+      error?: { message?: string; code?: string };
+    };
+    const msg =
+      typeof j.message === "string"
+        ? j.message
+        : typeof j.error?.message === "string"
+          ? j.error.message
+          : undefined;
+    const code =
+      typeof j.code === "string"
+        ? j.code
+        : typeof j.error?.code === "string"
+          ? j.error.code
+          : undefined;
+    if (msg && code === "model_not_found") {
+      return `${msg} (HTTP ${status}) · Settings → LLM → “Fetch model ids from API”; pick id listed for your key.`;
+    }
+    if (msg) return `${msg} (HTTP ${status})`;
+  } catch {
+    /* keep slice */
+  }
+  return `LLM HTTP ${status}: ${slice}`;
+}
+
+/** Lists ids from OpenAI-compat `GET /v1/models` using resolved Base URL + `bearerTokenForLlm(provider)`. */
+export async function fetchOpenAiCompatibleModelIds(): Promise<
+  { ok: true; ids: string[] } | { ok: false; error: string }
+> {
+  const s = getResolvedSettings();
+  const base = String(s.llm.baseUrl || "").replace(/\/$/, "");
+  if (!base.length) {
+    return { ok: false, error: "Base URL empty" };
+  }
+  const url = `${base}/v1/models`;
+  const key = bearerTokenForLlm(s.llm.provider)?.trim();
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (key) {
+    headers.Authorization = `Bearer ${key}`;
+  }
+  const to = Math.min(Math.max(s.llm.httpTimeoutMs, 5_000), 30_000);
+  try {
+    const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(to) });
+    const raw = await res.text();
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}: ${raw.slice(0, 400)}` };
+    }
+    let data: unknown;
+    try {
+      data = JSON.parse(raw) as unknown;
+    } catch {
+      return { ok: false, error: "GET /v1/models response not JSON" };
+    }
+    const arr =
+      data && typeof data === "object" && data !== null && Array.isArray((data as { data?: unknown }).data)
+        ? (data as { data: unknown[] }).data
+        : [];
+    const ids: string[] = [];
+    for (const item of arr) {
+      if (item && typeof item === "object" && typeof (item as { id?: unknown }).id === "string") {
+        ids.push((item as { id: string }).id);
+      }
+    }
+    return { ok: true, ids };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg };
+  }
+}
 
 export type ChatRole = "user" | "assistant" | "system";
 
@@ -96,12 +183,13 @@ function buildOpenAiBody(
     role: m.role,
     content: typeof m.content === "string" ? m.content : String(m.content),
   }));
-  const body: OpenAiChatCompletionRequestBody = {
+  const body = {
     model,
     messages,
     temperature,
     stream,
-  };
+    ...cerebrasChatExtras(lm.provider, model),
+  } as OpenAiChatCompletionRequestBody & Record<string, unknown>;
   if (stream) {
     body.stream_options = { include_usage: true };
   }
@@ -119,7 +207,7 @@ export async function chatCompletion(args: ChatCompletionArgs): Promise<string> 
     "Content-Type": "application/json",
     Accept: "application/json",
   };
-  const key = getSecrets().openai_api_key?.trim();
+  const key = bearerTokenForLlm(s.llm.provider)?.trim();
   if (key) {
     headers.Authorization = `Bearer ${key}`;
   }
@@ -145,7 +233,7 @@ export async function chatCompletion(args: ChatCompletionArgs): Promise<string> 
 
   if (!res.ok) {
     log.error(`HTTP ${res.status}`, raw.slice(0, 800));
-    throw new Error(`LLM HTTP ${res.status}: ${raw.slice(0, 300)}`);
+    throw new Error(llmHttpErrorText(res.status, raw));
   }
 
   let body: unknown;
@@ -200,12 +288,13 @@ export async function completionPost(params: {
     bodyPayload.tools = [...params.tools];
     bodyPayload.tool_choice = params.tool_choice ?? "auto";
   }
+  Object.assign(bodyPayload, cerebrasChatExtras(s.llm.provider, String(bodyPayload.model)));
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
   };
-  const key = getSecrets().openai_api_key?.trim();
+  const key = bearerTokenForLlm(s.llm.provider)?.trim();
   if (key) {
     headers.Authorization = `Bearer ${key}`;
   }
@@ -227,7 +316,7 @@ export async function completionPost(params: {
   const raw = await res.text();
   if (!res.ok) {
     log.error(`HTTP ${res.status}`, raw.slice(0, 800));
-    throw new Error(`LLM HTTP ${res.status}: ${raw.slice(0, 300)}`);
+    throw new Error(llmHttpErrorText(res.status, raw));
   }
   try {
     return JSON.parse(raw) as unknown;
@@ -315,12 +404,13 @@ export async function streamCompletionPost(params: {
     bodyPayload.tools = [...params.tools];
     bodyPayload.tool_choice = params.tool_choice ?? "auto";
   }
+  Object.assign(bodyPayload, cerebrasChatExtras(s.llm.provider, String(bodyPayload.model)));
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "text/event-stream",
   };
-  const key = getSecrets().openai_api_key?.trim();
+  const key = bearerTokenForLlm(s.llm.provider)?.trim();
   if (key) {
     headers.Authorization = `Bearer ${key}`;
   }
@@ -344,7 +434,7 @@ export async function streamCompletionPost(params: {
   if (!res.ok) {
     const raw = await res.text();
     log.error(`HTTP ${res.status}`, raw.slice(0, 800));
-    throw new Error(`LLM HTTP ${res.status}: ${raw.slice(0, 300)}`);
+    throw new Error(llmHttpErrorText(res.status, raw));
   }
 
   const bodyStream = res.body;
@@ -582,7 +672,7 @@ export async function streamChatCompletion(
     "Content-Type": "application/json",
     Accept: "text/event-stream",
   };
-  const key = getSecrets().openai_api_key?.trim();
+  const key = bearerTokenForLlm(s.llm.provider)?.trim();
   if (key) {
     headers.Authorization = `Bearer ${key}`;
   }
@@ -606,7 +696,7 @@ export async function streamChatCompletion(
   if (!res.ok) {
     const raw = await res.text();
     log.error(`HTTP ${res.status}`, raw.slice(0, 800));
-    throw new Error(`LLM HTTP ${res.status}: ${raw.slice(0, 300)}`);
+    throw new Error(llmHttpErrorText(res.status, raw));
   }
 
   const body = res.body;

@@ -5,6 +5,7 @@ import path from "node:path";
 
 import type { SecretsPayload } from "../config/secrets_config.js";
 import * as secretsCfg from "../config/secrets_config.js";
+import * as llmCfg from "../config/llm_config.js";
 import { formatDotenvSection, parseDotenvLines } from "../utils/env-file.js";
 
 let userDataDir: string | null = null;
@@ -13,8 +14,55 @@ let secretsCache: SecretsPayload | null = null;
 const ENV_UPPER: Array<[keyof SecretsPayload, string]> = [
   ["telegram_bot_token", "TELEGRAM_BOT_TOKEN"],
   ["openai_api_key", "OPENAI_API_KEY"],
+  ["groq_api_key", "GROQ_API_KEY"],
+  ["cerebras_api_key", "CEREBRAS_API_KEY"],
+  ["anthropic_api_key", "ANTHROPIC_API_KEY"],
+  ["openrouter_api_key", "OPENROUTER_API_KEY"],
   ["tavily_api_key", "TAVILY_API_KEY"],
 ];
+
+function bearerTokenFromPayload(providerId: string, s: SecretsPayload): string | undefined {
+  const fb = typeof s.openai_api_key === "string" ? s.openai_api_key.trim() : "";
+  switch (providerId) {
+    case "lm_studio":
+      return fb || undefined;
+    case "openai":
+      return fb || undefined;
+    case "groq": {
+      const g = typeof s.groq_api_key === "string" ? s.groq_api_key.trim() : "";
+      return g || fb || undefined;
+    }
+    case "cerebras": {
+      const c = typeof s.cerebras_api_key === "string" ? s.cerebras_api_key.trim() : "";
+      return c || fb || undefined;
+    }
+    case "claude": {
+      const a = typeof s.anthropic_api_key === "string" ? s.anthropic_api_key.trim() : "";
+      return a || fb || undefined;
+    }
+    case "openrouter": {
+      const o = typeof s.openrouter_api_key === "string" ? s.openrouter_api_key.trim() : "";
+      return o || fb || undefined;
+    }
+    case "custom":
+      return fb || undefined;
+    default:
+      return fb || undefined;
+  }
+}
+
+/** Bearer for LLM `providerId`; LM Studio may omit; hosted rows use dedicated `.env` key with `OPENAI_API_KEY` fallback. */
+export function bearerTokenForLlm(providerId: string): string | undefined {
+  return bearerTokenFromPayload(providerId, getSecrets());
+}
+
+/** Used by Settings snapshot — `lm_studio` never flagged missing; others need bearer chain present. */
+export function llmProviderAuthReady(providerId: string, s: SecretsPayload): boolean {
+  if (providerId === "lm_studio") {
+    return true;
+  }
+  return Boolean(bearerTokenFromPayload(providerId, s)?.trim());
+}
 
 function aaRootFromCwd(): string {
   const cwd = process.cwd();
@@ -108,6 +156,10 @@ function migrateJsonToDotenvIfNeeded(dotPath: string): void {
       if (
         parsed.telegram_bot_token ||
         parsed.openai_api_key ||
+        parsed.groq_api_key ||
+        parsed.cerebras_api_key ||
+        parsed.anthropic_api_key ||
+        parsed.openrouter_api_key ||
         parsed.tavily_api_key
       ) {
         return;
@@ -201,6 +253,10 @@ export function saveSecretsPatch(patch: Partial<SecretsPayload>): SecretsPayload
 
   setOrClear("telegram_bot_token", patch.telegram_bot_token);
   setOrClear("openai_api_key", patch.openai_api_key);
+  setOrClear("groq_api_key", patch.groq_api_key);
+  setOrClear("cerebras_api_key", patch.cerebras_api_key);
+  setOrClear("anthropic_api_key", patch.anthropic_api_key);
+  setOrClear("openrouter_api_key", patch.openrouter_api_key);
   setOrClear("tavily_api_key", patch.tavily_api_key);
 
   const dotPath = getSecretsFilePath();
@@ -258,22 +314,45 @@ export function getSecretsSnapshot(): {
   masked: {
     telegram_bot_token: string;
     openai_api_key: string;
+    groq_api_key: string;
+    cerebras_api_key: string;
+    anthropic_api_key: string;
+    openrouter_api_key: string;
     tavily_api_key: string;
   };
   hasTelegram: boolean;
   hasOpenAi: boolean;
+  hasGroq: boolean;
+  hasCerebras: boolean;
+  hasAnthropic: boolean;
+  hasOpenRouter: boolean;
   hasTavily: boolean;
+  /** Whether each LLM preset id has usable Bearer material for hosted APIs. */
+  llmProviderAuthOk: Record<string, boolean>;
 } {
   const s = loadFromDisk();
+  const llmProviderAuthOk: Record<string, boolean> = {};
+  for (const p of llmCfg.LLM_PROVIDERS) {
+    llmProviderAuthOk[p.id] = llmProviderAuthReady(p.id, s);
+  }
   return {
     filePath: getSecretsFilePath(),
     masked: {
       telegram_bot_token: mask(s.telegram_bot_token),
       openai_api_key: mask(s.openai_api_key),
+      groq_api_key: mask(s.groq_api_key),
+      cerebras_api_key: mask(s.cerebras_api_key),
+      anthropic_api_key: mask(s.anthropic_api_key),
+      openrouter_api_key: mask(s.openrouter_api_key),
       tavily_api_key: mask(s.tavily_api_key),
     },
     hasTelegram: Boolean(s.telegram_bot_token),
     hasOpenAi: Boolean(s.openai_api_key),
+    hasGroq: Boolean(s.groq_api_key),
+    hasCerebras: Boolean(s.cerebras_api_key),
+    hasAnthropic: Boolean(s.anthropic_api_key),
+    hasOpenRouter: Boolean(s.openrouter_api_key),
     hasTavily: Boolean(s.tavily_api_key),
+    llmProviderAuthOk,
   };
 }

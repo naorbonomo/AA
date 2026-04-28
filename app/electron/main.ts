@@ -8,7 +8,7 @@ import { BrowserWindow, Notification, app, ipcMain } from "electron";
 import type { SecretsPayload } from "../../config/secrets_config.js";
 import type { UserAgent, UserAppTime, UserLogging, UserLlm, UserSettings } from "../../config/user-settings.js";
 import type { ChatMessage, ChatUsageSnapshot, StreamDelta } from "../../services/llm.js";
-import { chatCompletion, streamChatCompletion } from "../../services/llm.js";
+import { chatCompletion, fetchOpenAiCompatibleModelIds, streamChatCompletion } from "../../services/llm.js";
 import { listSystemPromptsMeta } from "../../config/system_prompts.js";
 import { runChatWithWebSearchFromSettings, type AgentStepPayload } from "../../services/agent-runner.js";
 import { webSearch } from "../../services/web-search.js";
@@ -264,6 +264,17 @@ ipcMain.handle("app-time:utc-to-wall", (_e, raw: unknown) => {
   }
 });
 
+/** OpenAI-compat `GET /v1/models` for current LLM Base URL + Bearer (same chain as chat). */
+ipcMain.handle("llm:listModels", async () => {
+  try {
+    return await fetchOpenAiCompatibleModelIds();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("llm:listModels", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
 ipcMain.handle("scheduler:runNow", async (_e, id: unknown) => {
   try {
     const jid = typeof id === "string" ? id.trim() : "";
@@ -346,6 +357,18 @@ function sanitizeSecretsPatch(patch: Partial<SecretsPayload>): Partial<SecretsPa
   if (patch.openai_api_key !== undefined) {
     out.openai_api_key = patch.openai_api_key;
   }
+  if (patch.groq_api_key !== undefined) {
+    out.groq_api_key = patch.groq_api_key;
+  }
+  if (patch.cerebras_api_key !== undefined) {
+    out.cerebras_api_key = patch.cerebras_api_key;
+  }
+  if (patch.anthropic_api_key !== undefined) {
+    out.anthropic_api_key = patch.anthropic_api_key;
+  }
+  if (patch.openrouter_api_key !== undefined) {
+    out.openrouter_api_key = patch.openrouter_api_key;
+  }
   if (patch.tavily_api_key !== undefined) {
     out.tavily_api_key = patch.tavily_api_key;
   }
@@ -421,6 +444,7 @@ function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
   if ("llm" in o && o.llm && typeof o.llm === "object") {
     const l = o.llm as Record<string, unknown>;
     const llm: Partial<UserLlm> = {};
+    if (typeof l.provider === "string") llm.provider = l.provider.trim();
     if (typeof l.baseUrl === "string") llm.baseUrl = l.baseUrl.trim();
     if (typeof l.model === "string") llm.model = l.model.trim();
     if (l.temperature !== undefined) {

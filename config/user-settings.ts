@@ -1,6 +1,8 @@
 /** Nested runtime overrides — aligns with topic `*_config.ts` modules. Supports legacy flat keys on read. */
 
 export type UserLlm = {
+  /** Preset id from `LLM_PROVIDERS` (`lm_studio`, `openai`, …). */
+  provider?: string;
   baseUrl?: string;
   model?: string;
   temperature?: number;
@@ -44,6 +46,7 @@ export type UserSettings = {
 };
 
 export type ResolvedLlm = {
+  provider: string;
   baseUrl: string;
   model: string;
   temperature: number;

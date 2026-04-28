@@ -214,20 +214,63 @@ body {
   cursor: not-allowed;
 }
 
-/* —— Settings page: full-width scroll, % padding, no fixed max-width —— */
+/* —— Settings page: scroll body + docked footer (save always visible) —— */
 .settings-scroll {
   flex: 1 1 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   width: 96%;
   max-width: 100%;
   margin-left: auto;
   margin-right: auto;
-  padding: 1.2vh 2% 2.5vh;
+  padding: 1.2vh 2% 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+}
+
+.settings-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 1.4vh;
   display: flex;
   flex-direction: column;
   gap: 1.2vh;
-  min-height: 0;
+}
+
+.settings-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75em;
+  margin-bottom: 0.15em;
+}
+
+.settings-intro .hint,
+.settings-intro .settings-path {
+  margin-bottom: 0;
+}
+
+.settings-footer-bar {
+  flex-shrink: 0;
+  padding: 1vh 0 1.4vh;
+  border-top: var(--hairline) solid var(--border);
+  background: #0c0c12;
+  width: 100%;
+}
+
+.settings-footer-bar .settings-actions {
+  margin-top: 0;
+}
+
+.settings-footer-bar .settings-hint-save {
+  margin-top: 0.85vh;
+  margin-bottom: 0;
+}
+
+.settings-footer-bar .settings-status {
+  margin-top: 0.65vh;
 }
 
 /* Collapsible topic card (OpenAI-style topics = one <details> per config file) */
@@ -308,6 +351,17 @@ body {
   line-height: 1.45;
 }
 
+.settings-alert {
+  margin: 0 0 1vh;
+  font-size: 84%;
+  line-height: 1.45;
+}
+
+.settings-alert--bad {
+  color: #f87171;
+  font-weight: 600;
+}
+
 .settings-card__muted {
   opacity: 0.9;
 }
@@ -346,6 +400,21 @@ body {
 .secret-key-indicator--no {
   color: var(--muted);
   opacity: 0.9;
+}
+
+.settings-fetch-models {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.4rem 0 0;
+  font-size: 88%;
+}
+
+.settings-fetch-models__status {
+  color: var(--muted);
+  max-width: 100%;
+  word-break: break-word;
 }
 
 .settings-card__danger-actions {
@@ -390,6 +459,10 @@ body {
 .hint code {
   font-size: 84%;
   color: var(--accent);
+}
+
+.field--llm-model select {
+  margin-bottom: 6px;
 }
 
 .field {
@@ -696,6 +769,33 @@ body {
 
 .msg.role-user .role-h {
   color: var(--user);
+}
+
+.msg-user-actions {
+  margin-top: 0.55vh;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-msg-retry {
+  font: inherit;
+  font-size: 82%;
+  padding: 0.35vh 0.75vw;
+  border-radius: var(--radius);
+  border: var(--hairline) solid rgba(96, 165, 250, 0.35);
+  background: rgba(29, 78, 216, 0.28);
+  color: rgba(191, 219, 254, 0.98);
+  cursor: pointer;
+}
+
+.btn-msg-retry:hover {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(29, 78, 216, 0.42);
+}
+
+.btn-msg-retry:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .msg.role-assistant {

@@ -9,7 +9,9 @@
   const elPath = document.getElementById("settings-path");
   const elPathUser = document.getElementById("path-user-settings");
   const elPathSecrets = document.getElementById("path-secrets");
+  const elLlProvider = document.getElementById("set-llm-provider");
   const elLlBase = document.getElementById("set-llm-base");
+  const elLlModelSelect = document.getElementById("set-llm-model-select");
   const elLlModel = document.getElementById("set-llm-model");
   const elLlTemp = document.getElementById("set-llm-temp");
   const elLlTo = document.getElementById("set-llm-timeout");
@@ -19,9 +21,16 @@
   const elAgentL = document.getElementById("set-agent-label");
   const elAgentPrompt = document.getElementById("set-agent-prompt");
   const elAgentSystem = document.getElementById("set-agent-system");
+  const elLlSecretWarn = document.getElementById("llm-secret-warning");
+  const elBtnLlmFetchModels = document.getElementById("btn-llm-fetch-models");
+  const elLlFetchModelsStatus = document.getElementById("llm-fetch-models-status");
   const elSecTavily = document.getElementById("sec-tavily");
   const elSecTel = document.getElementById("sec-telegram");
   const elSecOpen = document.getElementById("sec-openai");
+  const elSecGroq = document.getElementById("sec-groq");
+  const elSecCerebras = document.getElementById("sec-cerebras");
+  const elSecAnthropic = document.getElementById("sec-anthropic");
+  const elSecOpenrouter = document.getElementById("sec-openrouter");
   const elMasked = document.getElementById("sec-masked");
   const elSecretsPathInline = document.getElementById("path-secrets-inline");
   const elStatus = document.getElementById("settings-status");
@@ -32,6 +41,113 @@
   const elAppTzCustomRow = document.getElementById("app-tz-custom-row");
   const elAppTzCustom = document.getElementById("app-tz-custom");
   const elAppRegionLabel = document.getElementById("app-region-label");
+
+  /** @type {Array<{ id: string, label: string, defaultBaseUrl: string, models: string[], defaultModel: string }>} */
+  let cachedLlmProviders = [];
+
+  /** Last successful GET /v1/models for `cachedApiModelsPid` — replaces static preset list until provider changes. */
+  let cachedApiModels = /** @type {string[] | null} */ (null);
+  let cachedApiModelsPid = "";
+
+  /** @type {Record<string, boolean>} */
+  let lastLlmAuthOk = {};
+
+  function refreshLlmSecretWarning() {
+    if (!(elLlSecretWarn instanceof HTMLElement)) return;
+    if (!(elLlProvider instanceof HTMLSelectElement)) return;
+    const pid = elLlProvider.value;
+    const ok = lastLlmAuthOk[pid] !== false;
+    if (ok) {
+      elLlSecretWarn.hidden = true;
+      elLlSecretWarn.textContent = "";
+    } else {
+      elLlSecretWarn.hidden = false;
+      elLlSecretWarn.textContent =
+        "No API token for this provider — open Secrets below and add the matching row (dedicated env name), or use OPENAI_API_KEY as fallback when listed.";
+    }
+  }
+
+  /** @param {string} id */
+  function llmPresetById(id) {
+    return cachedLlmProviders.find((p) => p.id === id) ?? cachedLlmProviders[0];
+  }
+
+  /** @param {{ id?: string, models?: string[] }} preset @param {string} model */
+  function syncLlmModelRow(preset, model) {
+    const cur = typeof model === "string" ? model.trim() : "";
+    const pid = elLlProvider instanceof HTMLSelectElement ? elLlProvider.value : "";
+    let models = Array.isArray(preset.models) ? preset.models : [];
+    if (
+      cachedApiModels &&
+      cachedApiModels.length &&
+      pid &&
+      preset.id === pid &&
+      pid === cachedApiModelsPid
+    ) {
+      models = cachedApiModels;
+    }
+    if (!(elLlModelSelect instanceof HTMLSelectElement) || !(elLlModel instanceof HTMLInputElement)) {
+      return;
+    }
+    const sel = elLlModelSelect;
+    const inp = elLlModel;
+    sel.innerHTML = "";
+    if (models.length === 0) {
+      sel.hidden = true;
+      inp.value = cur;
+      inp.style.display = "";
+      return;
+    }
+    sel.hidden = false;
+    for (const m of models) {
+      const o = document.createElement("option");
+      o.value = m;
+      o.textContent = m;
+      sel.appendChild(o);
+    }
+    const oOther = document.createElement("option");
+    oOther.value = "__other__";
+    oOther.textContent = "Other…";
+    sel.appendChild(oOther);
+    if (models.includes(cur)) {
+      sel.value = cur;
+      inp.style.display = "none";
+      inp.value = cur;
+    } else {
+      sel.value = "__other__";
+      inp.style.display = "";
+      inp.value = cur;
+    }
+  }
+
+  /** @param {unknown[]} providers */
+  function rebuildLlmProviderSelect(providers) {
+    cachedLlmProviders = [];
+    for (const p of providers) {
+      if (!p || typeof p !== "object") continue;
+      const po = /** @type {{ id?: string, label?: string, defaultBaseUrl?: string, models?: unknown, defaultModel?: string }} */ (p);
+      const id = typeof po.id === "string" ? po.id : "";
+      if (!id) continue;
+      const models = Array.isArray(po.models)
+        ? po.models.filter((x) => typeof x === "string").map((x) => /** @type {string} */ (x))
+        : [];
+      cachedLlmProviders.push({
+        id,
+        label: typeof po.label === "string" ? po.label : id,
+        defaultBaseUrl: typeof po.defaultBaseUrl === "string" ? po.defaultBaseUrl : "",
+        models,
+        defaultModel: typeof po.defaultModel === "string" ? po.defaultModel : "",
+      });
+    }
+    if (!(elLlProvider instanceof HTMLSelectElement)) return;
+    elLlProvider.innerHTML = "";
+    for (const p of cachedLlmProviders) {
+      const o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = p.label;
+      elLlProvider.appendChild(o);
+    }
+  }
 
   /** @type {{ appTime: { timeZone: string, regionLabel: string, deviceTimeZone: string } } | null} */
   let lastResolvedSnap = null;
@@ -151,8 +267,25 @@
 
     const r = snap.resolved;
     lastResolvedSnap = r;
+    const provList = Array.isArray(snap.llmProviders) ? snap.llmProviders : [];
+    rebuildLlmProviderSelect(provList);
+
+    const uLlm =
+      snap.user && typeof snap.user === "object"
+        ? /** @type {{ llm?: { provider?: string } }} */ (snap.user).llm
+        : null;
+    const storedPid = uLlm && typeof uLlm.provider === "string" ? uLlm.provider.trim() : "";
+    const pid =
+      storedPid && cachedLlmProviders.some((p) => p.id === storedPid)
+        ? storedPid
+        : typeof r.llm.provider === "string"
+          ? r.llm.provider
+          : cachedLlmProviders[0]?.id ?? "lm_studio";
+    if (elLlProvider instanceof HTMLSelectElement) {
+      elLlProvider.value = pid;
+    }
     elLlBase.value = r.llm.baseUrl;
-    elLlModel.value = r.llm.model;
+    syncLlmModelRow(llmPresetById(pid), r.llm.model);
     elLlTemp.value = String(r.llm.temperature);
     elLlTo.value = String(r.llm.httpTimeoutMs);
     elLogFile.checked = !!r.logging.logToFile;
@@ -194,6 +327,10 @@
     if (elSecTavily) elSecTavily.value = "";
     elSecTel.value = "";
     elSecOpen.value = "";
+    if (elSecGroq instanceof HTMLInputElement) elSecGroq.value = "";
+    if (elSecCerebras instanceof HTMLInputElement) elSecCerebras.value = "";
+    if (elSecAnthropic instanceof HTMLInputElement) elSecAnthropic.value = "";
+    if (elSecOpenrouter instanceof HTMLInputElement) elSecOpenrouter.value = "";
 
     const sec = await aa.secretsGet();
     elPathSecrets.textContent = sec.filePath;
@@ -215,6 +352,29 @@
       !!sec.hasOpenAi,
       sec.hasOpenAi ? "stored · " + sec.masked.openai_api_key : "not set",
     );
+    setSecretBadge(
+      document.getElementById("sec-badge-groq"),
+      !!sec.hasGroq,
+      sec.hasGroq ? "stored · " + (sec.masked.groq_api_key ?? "") : "not set",
+    );
+    setSecretBadge(
+      document.getElementById("sec-badge-cerebras"),
+      !!sec.hasCerebras,
+      sec.hasCerebras ? "stored · " + (sec.masked.cerebras_api_key ?? "") : "not set",
+    );
+    setSecretBadge(
+      document.getElementById("sec-badge-anthropic"),
+      !!sec.hasAnthropic,
+      sec.hasAnthropic ? "stored · " + (sec.masked.anthropic_api_key ?? "") : "not set",
+    );
+    setSecretBadge(
+      document.getElementById("sec-badge-openrouter"),
+      !!sec.hasOpenRouter,
+      sec.hasOpenRouter ? "stored · " + (sec.masked.openrouter_api_key ?? "") : "not set",
+    );
+    lastLlmAuthOk =
+      sec.llmProviderAuthOk && typeof sec.llmProviderAuthOk === "object" ? sec.llmProviderAuthOk : {};
+    refreshLlmSecretWarning();
     if (elMasked) {
       elMasked.textContent =
         "Full secrets are never shown in this form; stored keys show last chars only (masked) next to each field.";
@@ -225,8 +385,20 @@
     elStatus.textContent = "Saving…";
     await aa.settingsSave({
       llm: {
+        ...(elLlProvider instanceof HTMLSelectElement
+          ? { provider: elLlProvider.value.trim() }
+          : {}),
         baseUrl: elLlBase.value.trim(),
-        model: elLlModel.value.trim(),
+        model: (function () {
+          if (elLlModelSelect instanceof HTMLSelectElement && !elLlModelSelect.hidden) {
+            const v = elLlModelSelect.value;
+            if (v === "__other__" && elLlModel instanceof HTMLInputElement) {
+              return elLlModel.value.trim();
+            }
+            return typeof v === "string" ? v.trim() : "";
+          }
+          return elLlModel instanceof HTMLInputElement ? elLlModel.value.trim() : "";
+        })(),
         temperature: Number(elLlTemp.value),
         httpTimeoutMs: Number(elLlTo.value),
       },
@@ -266,6 +438,16 @@
     if (elSecTavily && elSecTavily.value.trim()) pt.tavily_api_key = elSecTavily.value.trim();
     if (elSecTel.value.trim()) pt.telegram_bot_token = elSecTel.value.trim();
     if (elSecOpen.value.trim()) pt.openai_api_key = elSecOpen.value.trim();
+    if (elSecGroq instanceof HTMLInputElement && elSecGroq.value.trim()) pt.groq_api_key = elSecGroq.value.trim();
+    if (elSecCerebras instanceof HTMLInputElement && elSecCerebras.value.trim()) {
+      pt.cerebras_api_key = elSecCerebras.value.trim();
+    }
+    if (elSecAnthropic instanceof HTMLInputElement && elSecAnthropic.value.trim()) {
+      pt.anthropic_api_key = elSecAnthropic.value.trim();
+    }
+    if (elSecOpenrouter instanceof HTMLInputElement && elSecOpenrouter.value.trim()) {
+      pt.openrouter_api_key = elSecOpenrouter.value.trim();
+    }
     if (Object.keys(pt).length) {
       await aa.secretsSave(pt);
     }
@@ -295,9 +477,37 @@
     elStatus.textContent = "Removed.";
   });
 
-  document.getElementById("btn-clear-secrets-key").addEventListener("click", async () => {
-    elStatus.textContent = "Removing API key…";
+  document.getElementById("btn-clear-secrets-openai").addEventListener("click", async () => {
+    elStatus.textContent = "Removing OpenAI key…";
     await aa.secretsSave({ openai_api_key: "" });
+    await loadAll();
+    elStatus.textContent = "Removed.";
+  });
+
+  document.getElementById("btn-clear-secrets-groq").addEventListener("click", async () => {
+    elStatus.textContent = "Removing Groq key…";
+    await aa.secretsSave({ groq_api_key: "" });
+    await loadAll();
+    elStatus.textContent = "Removed.";
+  });
+
+  document.getElementById("btn-clear-secrets-cerebras").addEventListener("click", async () => {
+    elStatus.textContent = "Removing Cerebras key…";
+    await aa.secretsSave({ cerebras_api_key: "" });
+    await loadAll();
+    elStatus.textContent = "Removed.";
+  });
+
+  document.getElementById("btn-clear-secrets-anthropic").addEventListener("click", async () => {
+    elStatus.textContent = "Removing Anthropic key…";
+    await aa.secretsSave({ anthropic_api_key: "" });
+    await loadAll();
+    elStatus.textContent = "Removed.";
+  });
+
+  document.getElementById("btn-clear-secrets-openrouter").addEventListener("click", async () => {
+    elStatus.textContent = "Removing OpenRouter key…";
+    await aa.secretsSave({ openrouter_api_key: "" });
     await loadAll();
     elStatus.textContent = "Removed.";
   });
@@ -312,6 +522,73 @@
   if (elAppTzPreset) {
     elAppTzPreset.addEventListener("change", () => {
       syncAppTzCustomRow();
+    });
+  }
+
+  if (elLlProvider instanceof HTMLSelectElement) {
+    elLlProvider.addEventListener("change", () => {
+      cachedApiModels = null;
+      cachedApiModelsPid = "";
+      if (elLlFetchModelsStatus) elLlFetchModelsStatus.textContent = "";
+      const preset = llmPresetById(elLlProvider.value);
+      if (elLlBase instanceof HTMLInputElement) {
+        elLlBase.value = preset.defaultBaseUrl || "";
+      }
+      syncLlmModelRow(preset, preset.defaultModel || "");
+      refreshLlmSecretWarning();
+    });
+  }
+
+  if (elBtnLlmFetchModels instanceof HTMLButtonElement && typeof aa.llmListModels === "function") {
+    elBtnLlmFetchModels.addEventListener("click", async () => {
+      if (!(elLlProvider instanceof HTMLSelectElement)) return;
+      elBtnLlmFetchModels.disabled = true;
+      if (elLlFetchModelsStatus) elLlFetchModelsStatus.textContent = "Fetching…";
+      try {
+        /** @type {{ ok?: boolean, ids?: string[], error?: string }} */
+        const r = await aa.llmListModels();
+        if (r && r.ok === true && Array.isArray(r.ids)) {
+          cachedApiModels = r.ids.filter((x) => typeof x === "string" && x.length);
+          cachedApiModelsPid = elLlProvider.value;
+          const preset = llmPresetById(elLlProvider.value);
+          const cur =
+            elLlModel instanceof HTMLInputElement && elLlModel.value.trim().length
+              ? elLlModel.value.trim()
+              : preset.defaultModel || "";
+          syncLlmModelRow(preset, cur);
+          if (elLlFetchModelsStatus) {
+            elLlFetchModelsStatus.textContent =
+              cachedApiModels.length === 0
+                ? "API returned no models."
+                : `${cachedApiModels.length} id(s) loaded — pick one above.`;
+          }
+        } else {
+          cachedApiModels = null;
+          cachedApiModelsPid = "";
+          const err = r && typeof r.error === "string" ? r.error : "failed";
+          if (elLlFetchModelsStatus) elLlFetchModelsStatus.textContent = err;
+        }
+      } catch (e) {
+        cachedApiModels = null;
+        cachedApiModelsPid = "";
+        const msg = e instanceof Error ? e.message : String(e);
+        if (elLlFetchModelsStatus) elLlFetchModelsStatus.textContent = msg;
+      } finally {
+        elBtnLlmFetchModels.disabled = false;
+      }
+    });
+  }
+
+  if (elLlModelSelect instanceof HTMLSelectElement) {
+    elLlModelSelect.addEventListener("change", () => {
+      if (!(elLlModel instanceof HTMLInputElement)) return;
+      const v = elLlModelSelect.value;
+      if (v === "__other__") {
+        elLlModel.style.display = "";
+      } else {
+        elLlModel.style.display = "none";
+        elLlModel.value = v;
+      }
     });
   }
 

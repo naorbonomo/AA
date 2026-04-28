@@ -11,8 +11,13 @@ export const DOTENV_SECRET_BASENAME = ".env";
 export type SecretsPayload = {
   /** Optional override; mirrors `TELEGRAM_BOT_TOKEN` in Smith backend `.env`. */
   telegram_bot_token?: string;
-  /** Optional OpenAI-compat API key when provider requires Bearer auth (LM Studio usually does not). */
+  /** OpenAI (`providerId` openai) + fallback for other LLM keys when dedicated secret missing. */
   openai_api_key?: string;
+  groq_api_key?: string;
+  cerebras_api_key?: string;
+  /** Claude / Anthropic OpenAI-compat (`providerId` claude). */
+  anthropic_api_key?: string;
+  openrouter_api_key?: string;
   /** Tavily Search — `web_search` reads from `userData/.env` `TAVILY_API_KEY` (Electron Settings → Secrets → Save all). */
   tavily_api_key?: string;
 };

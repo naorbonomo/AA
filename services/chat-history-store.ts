@@ -40,6 +40,8 @@ export type ChatHistoryRow = {
   reasoning?: string;
   agentTrace?: string;
   usageMeta?: ChatHistoryUsageMeta;
+  /** Persisted from renderer when assistant row is an HTTP/agent failure bubble. */
+  errReply?: boolean;
 };
 
 const MAX_ROWS = 500;
@@ -98,6 +100,9 @@ function normalizeRow(raw: unknown): ChatHistoryRow | null {
       meta.system_fingerprint = u.system_fingerprint.length > 256 ? u.system_fingerprint.slice(0, 256) : u.system_fingerprint;
     }
     row.usageMeta = meta;
+  }
+  if (o.errReply === true) {
+    row.errReply = true;
   }
   return row;
 }

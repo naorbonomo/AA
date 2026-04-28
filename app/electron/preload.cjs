@@ -54,6 +54,10 @@ contextBridge.exposeInMainWorld("aaDesktop", {
   settingsReload() {
     return ipcRenderer.invoke("settings:reload");
   },
+  /** `{ ok, ids?, error? }` — GET `/v1/models` for current LLM base URL + token. */
+  llmListModels() {
+    return ipcRenderer.invoke("llm:listModels");
+  },
   promptsList() {
     return ipcRenderer.invoke("prompts:list");
   },

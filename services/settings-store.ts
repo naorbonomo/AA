@@ -124,16 +124,22 @@ function stripSlash(u: string): string {
 
 function mergeLlm(u: UserLlm | undefined): ResolvedLlm {
   const x = u ?? {};
+  const inferred = llmDef.inferLlmProviderId(x);
+  const preset =
+    llmDef.getLlmProviderPreset(inferred) ??
+    llmDef.getLlmProviderPreset(llmDef.LLM_DEFAULT_PROVIDER_ID)!;
   const base =
     x.baseUrl != null && String(x.baseUrl).trim() !== ""
       ? stripSlash(String(x.baseUrl).trim())
-      : stripSlash(llmDef.LLM_DEFAULT_BASE_URL);
+      : stripSlash(preset.defaultBaseUrl);
+  const model =
+    x.model != null && String(x.model).trim() !== ""
+      ? String(x.model).trim()
+      : preset.defaultModel;
   return {
+    provider: preset.id,
     baseUrl: base,
-    model:
-      x.model != null && String(x.model).trim() !== ""
-        ? String(x.model).trim()
-        : llmDef.LLM_DEFAULT_MODEL,
+    model,
     temperature:
       typeof x.temperature === "number" && Number.isFinite(x.temperature)
         ? x.temperature
@@ -265,6 +271,7 @@ export function getSettingsSnapshot(): {
   filePath: string;
   user: UserSettings;
   timeZonePresets: typeof APP_TIME_ZONE_PRESETS;
+  llmProviders: readonly llmDef.LlmProviderPreset[];
 } {
   const user = normalizeDiskShape(readUserFileRaw());
   return {
@@ -272,5 +279,6 @@ export function getSettingsSnapshot(): {
     filePath: getSettingsFilePath(),
     user,
     timeZonePresets: [...APP_TIME_ZONE_PRESETS],
+    llmProviders: llmDef.LLM_PROVIDERS,
   };
 }

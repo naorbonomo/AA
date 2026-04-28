@@ -1,5 +1,6 @@
 {
   "llm": {
+    "provider": "lm_studio",
     "baseUrl": "http://192.168.0.166:1234",
     "model": "qwen3.6-35b-a3b-turboquant-mlx",
     "temperature": 0.2,
