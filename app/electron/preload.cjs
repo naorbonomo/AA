@@ -54,6 +54,9 @@ contextBridge.exposeInMainWorld("aaDesktop", {
   settingsReload() {
     return ipcRenderer.invoke("settings:reload");
   },
+  promptsList() {
+    return ipcRenderer.invoke("prompts:list");
+  },
   secretsGet() {
     return ipcRenderer.invoke("secrets:get");
   },

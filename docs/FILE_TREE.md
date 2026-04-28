@@ -10,20 +10,37 @@ AA/
 │   └── FILE_TREE.md
 ├── app/
 │   ├── electron/
-│   │   ├── main.ts          # Electron main: window, IPC (LLM chat + stream, settings, secrets)
-│   │   └── preload.cjs      # contextBridge → `window.aaDesktop` (must stay CommonJS; not emitted by `tsc`)
-│   └── renderer/            # static HTML/JS/CSS (excluded from `tsc`; no bundler)
-│       ├── chat.html        # Loads `chat.js`
-│       ├── chat.js          # TAB: streamed `/v1/chat/completions`; thinking (blue card) + answer (green); expand/collapse thinking panel
-│       ├── settings.html    # Loads `settings-page.js`; collapsible cards per topic; nav tabs ↔ chat
-│       ├── settings-page.js
-│       └── styles.css       # Viewport-relative sizing (`vw/vh/vmin/%/em`; hairlines only via `max(1px, …)` rule in file header)
-├── config/
+│   │   ├── main.ts            # Electron main process: creates window, handles IPC for chat/stream, settings, secrets
+│   │   └── preload.cjs        # Exposes limited APIs via `window.aaDesktop` (must remain CommonJS; excluded from `tsc`)
+│   └── renderer/              # Static HTML/JS/CSS; no Webpack/bundler (not processed by `tsc`)
+│       ├── chat.html          # Main chat window: loads chat.js
+│       ├── chat.js            # Implements: streaming chat (/v1/chat/completions), "thinking" panel, conversation UI
+│       ├── settings.html      # Loads settings-page.js; topic cards; nav tabs to switch between chat/settings
+│       ├── settings-page.js   # Settings UI logic
+│       └── styles.css         # Responsive CSS, hairlines via `max(1px, …)` rule in file header
+├── config/                    # LLM, agent, logging, web search, user-secrets, user-settings
+│   ├── agent_config.ts
+│   ├── defaults.ts
+│   ├── index.ts
+│   ├── llm.ts
+│   ├── llm_config.ts
+│   ├── logging.ts
+│   ├── logging_config.ts
+│   ├── secrets_config.ts
+│   ├── user-settings.example.json
+│   ├── user-settings.ts
+│   └── web_search_config.ts
 ├── services/
-├── utils/
-├── cli.ts                   # Headless smoke: optional `tsx cli.ts` (`npm run cli`)
+│   ├── llm.ts                 # OpenAI-compatible: chatCompletion/streamChatCompletion
+│   ├── settings-store.ts      # Settings merge/load/save (Electron vs CLI)
+│   ├── secrets-store.ts       # Handles .env, migration from legacy aa-secrets.json, getSecretsFilePath()
+│   └── web-search.ts          # Tavily API integration (web_search tool)
+├── utils/                     # Utility functions/helpers
+├── cli.ts                     # Headless CLI: optional `tsx cli.ts` (or `npm run cli`)
 ├── package.json
-└── tsconfig.json
+├── tsconfig.json
+└── .vscode/
+    └── settings.json          # Editor config (colorCustomizations etc.)
 ```
 
 **Output / local files (often gitignored at repo root):**

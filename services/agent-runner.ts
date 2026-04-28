@@ -1,5 +1,7 @@
 /** Agent loop: `web_search` tool + follow-up completions (main process; Python Smith `quick_web_search` analogue). */
 
+import { resolveAgentSystemContent } from "../config/system_prompts.js";
+import type { ResolvedAgent } from "../config/user-settings.js";
 import type { ChatMessage, ChatUsageSnapshot, CompletionApiMessage, StreamDelta } from "./llm.js";
 import { normalizeAssistantContent, streamCompletionPost } from "./llm.js";
 import { webSearch, webSearchOpenAiTool } from "./web-search.js";
@@ -7,16 +9,6 @@ import { getResolvedSettings } from "./settings-store.js";
 import { getLogger } from "../utils/logger.js";
 
 const log = getLogger("agent-runner");
-
-const SYSTEM_WITH_TOOLS = `You have a web_search tool — Tavily API (Keys: Settings → Secrets → Save all; persists to userData .env as TAVILY_API_KEY and mirrors into process.env).
-
-Important — tool output can be wrong for live clocks/prices:
-- Snippets are citations from web crawl/index — not authoritative atomic clocks; wrong timezone, stale page text, or wrong city matches are normal.
-- If JSON includes field tavily_short_answer (Tavily summary), sanity-check versus the user's stated place/timezone question; do not treat as calibrated truth.
-- If user asks local time for city X but numbers disagree with plausible offset vs neighboring regions or their machine clock, say search results are unreliable; suggest time.is / worldclock or OS clock rather than asserting one snippet.
-- For prices: say figures come from snippets, approximate.
-
-Otherwise cite site names from snippets; retry with sharper queries if irrelevant. Skip search for pure chit-chat.`;
 
 export type AgentStepPayload =
   | { kind: "web_search"; status: "start"; query: string }
@@ -73,6 +65,8 @@ function parseToolArgs(raw: string | undefined): { query?: string; max_results?:
 export async function runChatWithWebSearchTool(opts: {
   history: ChatMessage[];
   maxToolRounds: number;
+  /** When omitted, reads merged settings once for system preset/override. */
+  resolvedAgent?: ResolvedAgent;
   onStep?: (p: AgentStepPayload) => void;
   /** Token/reasoning deltas for current assistant round (each completion is streamed). */
   onStreamDelta?: (d: StreamDelta) => void;
@@ -82,7 +76,9 @@ export async function runChatWithWebSearchTool(opts: {
   usage?: ChatUsageSnapshot;
 }> {
   const maxRounds = Math.max(1, Math.min(500, opts.maxToolRounds));
-  const msgs: CompletionApiMessage[] = [{ role: "system", content: SYSTEM_WITH_TOOLS }];
+  const agentResolved = opts.resolvedAgent ?? getResolvedSettings().agent;
+  const systemBody = resolveAgentSystemContent(agentResolved);
+  const msgs: CompletionApiMessage[] = [{ role: "system", content: systemBody }];
   for (const m of opts.history) {
     const c = typeof m.content === "string" ? m.content : String(m.content);
     msgs.push({ role: m.role, content: c } as CompletionApiMessage);
@@ -205,6 +201,12 @@ export async function runChatWithWebSearchFromSettings(
   onStep?: (p: AgentStepPayload) => void,
   onStreamDelta?: (d: StreamDelta) => void,
 ): Promise<{ text: string; steps: AgentStepPayload[]; usage?: ChatUsageSnapshot }> {
-  const n = getResolvedSettings().agent.maxToolRounds;
-  return runChatWithWebSearchTool({ history, maxToolRounds: n, onStep, onStreamDelta });
+  const s = getResolvedSettings();
+  return runChatWithWebSearchTool({
+    history,
+    maxToolRounds: s.agent.maxToolRounds,
+    resolvedAgent: s.agent,
+    onStep,
+    onStreamDelta,
+  });
 }

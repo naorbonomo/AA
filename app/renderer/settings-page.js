@@ -17,6 +17,8 @@
   const elLogCon = document.getElementById("set-log-console");
   const elAgentR = document.getElementById("set-agent-rounds");
   const elAgentL = document.getElementById("set-agent-label");
+  const elAgentPrompt = document.getElementById("set-agent-prompt");
+  const elAgentSystem = document.getElementById("set-agent-system");
   const elSecTavily = document.getElementById("sec-tavily");
   const elSecTel = document.getElementById("sec-telegram");
   const elSecOpen = document.getElementById("sec-openai");
@@ -35,6 +37,14 @@
 
   async function loadAll() {
     elStatus.textContent = "";
+    let meta = { prompts: [] };
+    try {
+      if (typeof aa.promptsList === "function") {
+        meta = await aa.promptsList();
+      }
+    } catch (_) {}
+    const prompts = meta && Array.isArray(meta.prompts) ? meta.prompts : [];
+
     const snap = await aa.settingsGet();
     elPath.textContent = "Overrides: " + snap.filePath;
     elPathUser.textContent = snap.filePath;
@@ -48,6 +58,32 @@
     elLogCon.checked = !!r.logging.logToConsole;
     elAgentR.value = String(r.agent.maxToolRounds);
     elAgentL.value = r.agent.sessionLabel || "";
+    if (elAgentPrompt instanceof HTMLSelectElement) {
+      elAgentPrompt.innerHTML = "";
+      const curPk = typeof r.agent.promptKey === "string" ? r.agent.promptKey : "";
+      const keysSeen = {};
+      for (const p of prompts) {
+        if (!p || typeof p !== "object") continue;
+        const k = typeof p.key === "string" ? p.key : "";
+        if (!k || keysSeen[k]) continue;
+        keysSeen[k] = true;
+        const opt = document.createElement("option");
+        opt.value = k;
+        const desc = typeof p.description === "string" ? p.description : "";
+        opt.textContent = desc ? k + " — " + desc : k;
+        elAgentPrompt.appendChild(opt);
+      }
+      if (curPk && !keysSeen[curPk]) {
+        const opt = document.createElement("option");
+        opt.value = curPk;
+        opt.textContent = curPk + " (stored)";
+        elAgentPrompt.appendChild(opt);
+      }
+      elAgentPrompt.value = curPk || (elAgentPrompt.options[0] ? elAgentPrompt.options[0].value : "");
+    }
+    if (elAgentSystem instanceof HTMLTextAreaElement) {
+      elAgentSystem.value = typeof r.agent.systemPrompt === "string" ? r.agent.systemPrompt : "";
+    }
 
     if (elSecTavily) elSecTavily.value = "";
     elSecTel.value = "";
@@ -95,6 +131,12 @@
       agent: {
         maxToolRounds: Number(elAgentR.value),
         sessionLabel: elAgentL.value.trim(),
+        ...(elAgentPrompt instanceof HTMLSelectElement
+          ? { promptKey: elAgentPrompt.value.trim() }
+          : {}),
+        ...(elAgentSystem instanceof HTMLTextAreaElement
+          ? { systemPrompt: elAgentSystem.value }
+          : {}),
       },
     });
 

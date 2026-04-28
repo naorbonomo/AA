@@ -9,6 +9,7 @@ import type { SecretsPayload } from "../../config/secrets_config.js";
 import type { UserAgent, UserLogging, UserLlm, UserSettings } from "../../config/user-settings.js";
 import type { ChatMessage, ChatUsageSnapshot, StreamDelta } from "../../services/llm.js";
 import { chatCompletion, streamChatCompletion } from "../../services/llm.js";
+import { listSystemPromptsMeta } from "../../config/system_prompts.js";
 import { runChatWithWebSearchFromSettings, type AgentStepPayload } from "../../services/agent-runner.js";
 import { webSearch } from "../../services/web-search.js";
 import {
@@ -145,6 +146,10 @@ ipcMain.handle("settings:reload", () => {
   return r;
 });
 
+ipcMain.handle("prompts:list", () => ({
+  prompts: listSystemPromptsMeta(),
+}));
+
 ipcMain.handle("secrets:get", () => getSecretsSnapshot());
 
 ipcMain.handle("secrets:save", (_e, patch: unknown) =>
@@ -263,6 +268,8 @@ function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
       if (Number.isFinite(n) && n >= 1 && n <= 500) agent.maxToolRounds = Math.floor(n);
     }
     if (typeof a.sessionLabel === "string") agent.sessionLabel = a.sessionLabel.trim();
+    if (typeof a.promptKey === "string") agent.promptKey = a.promptKey.trim();
+    if (typeof a.systemPrompt === "string") agent.systemPrompt = a.systemPrompt;
     if (Object.keys(agent).length) out.agent = agent as UserAgent;
   }
 

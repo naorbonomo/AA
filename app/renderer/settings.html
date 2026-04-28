@@ -89,6 +89,17 @@
             <span>Session label (optional)</span>
             <input type="text" id="set-agent-label" spellcheck="false" autocomplete="off" />
           </label>
+          <label class="field">
+            <span>System preset (<code>config/system_prompts.ts</code>)</span>
+            <select id="set-agent-prompt" aria-describedby="hint-agent-preset"></select>
+          </label>
+          <p class="settings-card__meta" id="hint-agent-preset">
+            Built-in keys + descriptions; same idea as Smith <code>/api/llm/system-prompts</code>. Override below replaces preset when non-empty.
+          </p>
+          <label class="field">
+            <span>Custom system prompt (optional override)</span>
+            <textarea id="set-agent-system" rows="6" spellcheck="false" placeholder="Leave empty to use preset only"></textarea>
+          </label>
         </div>
       </details>
 

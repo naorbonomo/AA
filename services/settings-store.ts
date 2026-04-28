@@ -6,6 +6,10 @@ import path from "node:path";
 import * as agentDef from "../config/agent_config.js";
 import * as llmDef from "../config/llm_config.js";
 import * as loggingDef from "../config/logging_config.js";
+import {
+  DEFAULT_AGENT_PROMPT_KEY,
+  SYSTEM_PROMPTS,
+} from "../config/system_prompts.js";
 import type {
   ResolvedAgent,
   ResolvedAppSettings,
@@ -140,11 +144,23 @@ function mergeAgent(u: UserAgent | undefined): ResolvedAgent {
   const x = u ?? {};
   const mr = x.maxToolRounds;
   const defaultLabel = agentDef.AGENT_DEFAULT_SESSION_LABEL_DEFAULT.trim();
+  const rawPk = typeof x.promptKey === "string" ? x.promptKey.trim() : "";
+  const promptKey =
+    rawPk && Object.prototype.hasOwnProperty.call(SYSTEM_PROMPTS, rawPk) ? rawPk : DEFAULT_AGENT_PROMPT_KEY;
+  let systemPrompt: string | undefined;
+  if (typeof x.systemPrompt === "string") {
+    const t = x.systemPrompt.trim();
+    if (t.length) {
+      systemPrompt = t.length > 100_000 ? t.slice(0, 100_000) : t;
+    }
+  }
   return {
     maxToolRounds:
       typeof mr === "number" && Number.isFinite(mr) && mr >= 1 && mr <= 500 ? Math.floor(mr) : agentDef.AGENT_RUN_MAX_TOOL_ROUNDS_DEFAULT,
     sessionLabel:
       x.sessionLabel !== undefined ? String(x.sessionLabel).trim() : defaultLabel,
+    promptKey,
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
   };
 }
 

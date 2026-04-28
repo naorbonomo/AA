@@ -1,5 +1,7 @@
 /** Agent-style limits for AA desktop (parity slice of `backend/app/config/agent_config.ts`). */
 
+/** Named system presets live in `config/system_prompts.ts` (`DEFAULT_AGENT_PROMPT_KEY` for web-search chat). */
+
 /** Max tool rounds when/if AA grows an agent loop (hook for future MCP/tools). */
 export const AGENT_RUN_MAX_TOOL_ROUNDS_DEFAULT = 20;
 
