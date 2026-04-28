@@ -233,9 +233,14 @@
     });
   }
 
+  /** Serialize disk writes so rapid scheduler (or any) turns cannot reorder IPC — stale save must not overwrite newer history. */
+  let persistChain = Promise.resolve();
+
   function persistHistory() {
     if (typeof aa.chatHistorySave !== "function") return;
-    void aa.chatHistorySave(rowsForPersist()).catch(() => {});
+    persistChain = persistChain.then(() =>
+      aa.chatHistorySave(rowsForPersist()).catch(() => {}),
+    );
   }
 
   /** @param {unknown} r */
