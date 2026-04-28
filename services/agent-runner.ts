@@ -3,7 +3,7 @@
 import { resolveAgentSystemContent } from "../config/system_prompts.js";
 import type { ResolvedAgent } from "../config/user-settings.js";
 import type { ChatMessage, ChatUsageSnapshot, CompletionApiMessage, StreamDelta } from "./llm.js";
-import { normalizeAssistantContent, streamCompletionPost } from "./llm.js";
+import { normalizeAssistantContent, streamCompletionPost, completionUserMessage } from "./llm.js";
 import { executeScheduleJobTool, scheduleJobOpenAiTool } from "./schedule-job-tool.js";
 import { webSearch, webSearchOpenAiTool } from "./web-search.js";
 import {
@@ -102,9 +102,14 @@ export async function runChatWithWebSearchTool(opts: {
       ? opts.stagedAudioByFileName
       : new Map<string, StagedAudioClip>();
   const whisperResolved = settings.whisper;
+  const vision = settings.llm.vision === true;
   const systemBody = resolveAgentSystemContent(agentResolved);
   const msgs: CompletionApiMessage[] = [{ role: "system", content: systemBody }];
   for (const m of opts.history) {
+    if (m.role === "user") {
+      msgs.push(completionUserMessage(m, vision));
+      continue;
+    }
     const c = typeof m.content === "string" ? m.content : String(m.content);
     msgs.push({ role: m.role, content: c } as CompletionApiMessage);
   }

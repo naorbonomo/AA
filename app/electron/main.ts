@@ -14,7 +14,7 @@ import type {
   UserSettings,
   UserWhisper,
 } from "../../config/user-settings.js";
-import type { ChatMessage, ChatUsageSnapshot, StreamDelta } from "../../services/llm.js";
+import type { ChatImagePart, ChatMessage, ChatUsageSnapshot, StreamDelta } from "../../services/llm.js";
 import { chatCompletion, fetchOpenAiCompatibleModelIds, streamChatCompletion } from "../../services/llm.js";
 import { listSystemPromptsMeta } from "../../config/system_prompts.js";
 import { runChatWithWebSearchFromSettings, type AgentStepPayload } from "../../services/agent-runner.js";
@@ -384,12 +384,31 @@ ipcMain.handle("agent:chat", async (event, raw: unknown) => {
     if (!m || typeof m !== "object") {
       continue;
     }
-    const o = m as { role?: unknown; content?: unknown };
+    const o = m as { role?: unknown; content?: unknown; images?: unknown };
     const role = o.role === "user" ? "user" : o.role === "assistant" ? "assistant" : o.role === "system" ? "system" : null;
     if (!role || typeof o.content !== "string") {
       continue;
     }
-    hist.push({ role, content: o.content });
+    const row: ChatMessage = { role, content: o.content };
+    if (role === "user" && Array.isArray(o.images)) {
+      const images: ChatImagePart[] = [];
+      for (const im of o.images) {
+        if (!im || typeof im !== "object") {
+          continue;
+        }
+        const io = im as Record<string, unknown>;
+        const mediaType = typeof io.mediaType === "string" ? io.mediaType.trim() : "";
+        const base64 = typeof io.base64 === "string" ? io.base64.trim() : "";
+        const fileName = typeof io.fileName === "string" ? io.fileName : "";
+        if (base64.length && mediaType.startsWith("image/")) {
+          images.push({ fileName, mediaType, base64 });
+        }
+      }
+      if (images.length) {
+        row.images = images;
+      }
+    }
+    hist.push(row);
   }
 
   const stagedAudioByFileName = new Map<string, StagedAudioClip>();
@@ -555,6 +574,9 @@ function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
     if (l.httpTimeoutMs !== undefined) {
       const ms = Number(l.httpTimeoutMs);
       if (Number.isFinite(ms) && ms > 0) llm.httpTimeoutMs = ms;
+    }
+    if (typeof l.vision === "boolean") {
+      llm.vision = l.vision;
     }
     if (Object.keys(llm).length) out.llm = llm as UserLlm;
   }

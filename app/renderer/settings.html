@@ -68,6 +68,15 @@
               <button type="button" class="btn-msg-retry" id="btn-llm-fetch-models">Fetch model ids from API</button>
               <span id="llm-fetch-models-status" class="settings-fetch-models__status" aria-live="polite"></span>
             </p>
+            <div class="field field--row field--vision">
+              <label class="check">
+                <input type="checkbox" id="set-llm-vision" />
+                Vision (image input)
+              </label>
+            </div>
+            <p class="settings-card__meta" id="hint-llm-vision">
+              When enabled, attached images are sent to the model as OpenAI-style <code>image_url</code> parts. Turn off for text-only models to avoid API errors.
+            </p>
             <label class="field">
               <span>Temperature</span>
               <input type="text" id="set-llm-temp" inputmode="decimal" />

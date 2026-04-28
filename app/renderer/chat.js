@@ -1,7 +1,19 @@
 (function () {
   /** @typedef {{ ok: boolean, text?: string, error?: string }} ChatIPCResult */
-  /** @typedef {{ wallMs: number, total_tokens: number|null, prompt_tokens: number|null, completion_tokens: number|null, reasoning_tokens?: number, msPerToken: number|null, system_fingerprint?: string }} UsageMeta */
-  /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, source?: "scheduler", errReply?: boolean }} Row */
+  /**
+   * @typedef {{
+   *   wallMs: number,
+   *   total_tokens: number|null,
+   *   prompt_tokens: number|null,
+   *   completion_tokens: number|null,
+   *   reasoning_tokens?: number,
+   *   msPerToken: number|null,
+   *   system_fingerprint?: string
+   * }} UsageMeta
+   * msPerToken = wallMs / completion_tokens when known (footer tok/s); else wallMs / total_tokens.
+   */
+  /** @typedef {{ name: string, kind: "image"|"audio"|"file", previewUrl?: string, thumbnailDataUrl?: string }} RowAttachment */
+  /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, source?: "scheduler", errReply?: boolean, images?: { fileName: string, mediaType: string, base64: string }[], displayAttachments?: RowAttachment[] }} Row */
 
   const aa = window.aaDesktop;
 
@@ -31,7 +43,7 @@
 
   const THINK_TIER_KEY = "aa.thinkingPanelTier";
 
-  /** @type {{ name: string, type: string, ab: ArrayBuffer }[]} */
+  /** @type {{ name: string, type: string, ab: ArrayBuffer, previewUrl?: string }[]} */
   const pendingAttachments = [];
 
   /**
@@ -59,18 +71,183 @@
     elAttachList.textContent = pendingAttachments.map((p) => p.name).join(" · ");
   }
 
+  /** @param {string} name @param {string} type */
+  function isProbablyImage(name, type) {
+    if (typeof type === "string" && type.startsWith("image/")) {
+      return true;
+    }
+    return /\.(jpe?g|png|gif|webp|bmp|svg|heic|avif)$/i.test(name);
+  }
+
+  /** @param {string} name @param {string} type */
+  function guessImageMediaType(name, type) {
+    if (typeof type === "string" && type.startsWith("image/")) {
+      const t = type.split(";")[0].trim();
+      return t || "image/png";
+    }
+    const n = name.toLowerCase();
+    if (n.endsWith(".png")) {
+      return "image/png";
+    }
+    if (n.endsWith(".gif")) {
+      return "image/gif";
+    }
+    if (n.endsWith(".webp")) {
+      return "image/webp";
+    }
+    if (n.endsWith(".bmp")) {
+      return "image/bmp";
+    }
+    if (n.endsWith(".svg")) {
+      return "image/svg+xml";
+    }
+    if (n.endsWith(".heic")) {
+      return "image/heic";
+    }
+    if (n.endsWith(".avif")) {
+      return "image/avif";
+    }
+    if (n.endsWith(".jpg") || n.endsWith(".jpeg")) {
+      return "image/jpeg";
+    }
+    return "image/png";
+  }
+
   /**
-   * @param {string} text
-   * @returns {Promise<{ userContent: string, staged: { name: string, sampleRate: number, pcm: ArrayBuffer }[] }>}
+   * Small JPEG for disk + reload (`data:` URL). Skips SVG/other decode failures.
+   * @param {ArrayBuffer} ab
+   * @param {string} mimeType
+   * @param {number} [maxSide]
+   * @returns {Promise<string>}
+   */
+  async function makeThumbnailDataUrl(ab, mimeType, maxSide) {
+    const max = typeof maxSide === "number" && maxSide > 32 ? maxSide : 320;
+    const mime = (mimeType || "image/jpeg").split(";")[0].trim().toLowerCase();
+    if (mime === "image/svg+xml") {
+      return "";
+    }
+    try {
+      const blob = new Blob([ab], { type: mime || "image/jpeg" });
+      const bmp = await createImageBitmap(blob);
+      const w = bmp.width;
+      const h = bmp.height;
+      if (!(w > 0 && h > 0)) {
+        bmp.close();
+        return "";
+      }
+      const scale = Math.min(1, max / Math.max(w, h));
+      const tw = Math.max(1, Math.round(w * scale));
+      const th = Math.max(1, Math.round(h * scale));
+      const c = document.createElement("canvas");
+      c.width = tw;
+      c.height = th;
+      const ctx = c.getContext("2d");
+      if (!ctx) {
+        bmp.close();
+        return "";
+      }
+      ctx.drawImage(bmp, 0, 0, tw, th);
+      bmp.close();
+      return c.toDataURL("image/jpeg", 0.85);
+    } catch (_) {
+      return "";
+    }
+  }
+
+  /**
+   * Recover attachment chips for older saves (no `displayAttachments`), from `content` tail.
+   * @param {string} content
+   * @returns {RowAttachment[] | null}
+   */
+  function hydrateAttachmentsFromContent(content) {
+    if (typeof content !== "string") {
+      return null;
+    }
+    const key = "---\nAttached files";
+    const idx = content.lastIndexOf(key);
+    if (idx === -1) {
+      return null;
+    }
+    let tail = content.slice(idx + key.length);
+    const nl0 = tail.indexOf("\n");
+    if (nl0 !== -1) {
+      tail = tail.slice(nl0 + 1);
+    }
+    /** @type {RowAttachment[]} */
+    const out = [];
+    for (const line of tail.split("\n")) {
+      const mm = /^- (.+) \(([^)]+)\)\s*$/.exec(line.trim());
+      if (!mm) {
+        continue;
+      }
+      const name = mm[1];
+      const mime = mm[2];
+      let kind = "file";
+      if (mime.startsWith("image/") || isProbablyImage(name, mime)) {
+        kind = "image";
+      } else if (mime.startsWith("audio/") || isProbablyAudio(name, mime)) {
+        kind = "audio";
+      }
+      out.push({ name, kind });
+    }
+    return out.length ? out : null;
+  }
+
+  /** @param {ArrayBuffer} ab */
+  function arrayBufferToBase64(ab) {
+    const bytes = new Uint8Array(ab);
+    const chunk = 0x8000;
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(bin);
+  }
+
+  /** @param {string} text
+   * @returns {Promise<{ userContent: string, staged: { name: string, sampleRate: number, pcm: ArrayBuffer }[], images: { fileName: string, mediaType: string, base64: string }[], displayAttachments: RowAttachment[] }>}
    */
   async function buildUserMessageAndStaged(text) {
+    let vision = false;
+    try {
+      if (typeof aa.settingsGet === "function") {
+        const snap = await aa.settingsGet();
+        if (snap && snap.resolved && snap.resolved.llm) {
+          vision = !!snap.resolved.llm.vision;
+        }
+      }
+    } catch (_) {}
+
     const base = typeof text === "string" ? text.trim() : "";
     const lines = [];
     /** @type {{ name: string, sampleRate: number, pcm: ArrayBuffer }[]} */
     const staged = [];
+    /** @type {{ fileName: string, mediaType: string, base64: string }[]} */
+    const images = [];
     const dec = globalThis.aaWhisperDecode;
+    let anyImage = false;
+    /** @type {RowAttachment[]} */
+    const displayAttachments = [];
     for (const p of pendingAttachments) {
       lines.push("- " + p.name + " (" + p.type + ")");
+      if (isProbablyImage(p.name, p.type)) {
+        anyImage = true;
+        const mime = guessImageMediaType(p.name, p.type);
+        const thumb = await makeThumbnailDataUrl(p.ab, mime);
+        /** @type {RowAttachment} */
+        const chip = { name: p.name, kind: "image" };
+        if (p.previewUrl) {
+          chip.previewUrl = p.previewUrl;
+        }
+        if (thumb) {
+          chip.thumbnailDataUrl = thumb;
+        }
+        displayAttachments.push(chip);
+      } else if (isProbablyAudio(p.name, p.type)) {
+        displayAttachments.push({ name: p.name, kind: "audio" });
+      } else {
+        displayAttachments.push({ name: p.name, kind: "file" });
+      }
       if (isProbablyAudio(p.name, p.type) && dec && typeof dec.decodeToMonoF32 === "function") {
         try {
           const { samples, sampleRate } = await dec.decodeToMonoF32(p.ab);
@@ -80,18 +257,34 @@
           /* listed but not staged — tool may error */
         }
       }
+      if (vision && isProbablyImage(p.name, p.type)) {
+        try {
+          const mediaType = guessImageMediaType(p.name, p.type);
+          const base64 = arrayBufferToBase64(p.ab);
+          if (base64.length) {
+            images.push({ fileName: p.name, mediaType, base64 });
+          }
+        } catch (_) {
+          /* skip image */
+        }
+      }
     }
     pendingAttachments.length = 0;
     renderAttachList();
-    const head =
+    let head =
       lines.length && !base
         ? "User attached files (see list below — use stt with exact file_name to transcribe audio to text)."
         : base;
+    if (anyImage && !vision) {
+      head +=
+        (head ? "\n\n" : "") +
+        "[Vision (image input) is off in Settings → LLM — model only sees file names above, not pixels.]";
+    }
     const block =
       "\n\n---\nAttached files (full names — call stt with file_name matching one line for audio):\n" +
       lines.join("\n");
     const userContent = lines.length ? head + block : head;
-    return { userContent, staged };
+    return { userContent, staged, images, displayAttachments };
   }
 
   /** @param {number} tier 1..3 */
@@ -177,8 +370,8 @@
     }
     let msPerToken = null;
     if (wallMs > 0) {
-      if (total !== null && total > 0) msPerToken = wallMs / total;
-      else if (completion !== null && completion > 0) msPerToken = wallMs / completion;
+      if (completion !== null && completion > 0) msPerToken = wallMs / completion;
+      else if (total !== null && total > 0) msPerToken = wallMs / total;
     }
     /** @type {UsageMeta} */
     const meta = {
@@ -216,8 +409,9 @@
     if (typeof meta.reasoning_tokens === "number") {
       parts.push("reasoning " + meta.reasoning_tokens);
     }
-    if (meta.msPerToken !== null && Number.isFinite(meta.msPerToken)) {
-      parts.push(meta.msPerToken.toFixed(2) + " ms/tok");
+    if (meta.msPerToken !== null && Number.isFinite(meta.msPerToken) && meta.msPerToken > 0) {
+      const tps = 1000 / meta.msPerToken;
+      parts.push(tps.toFixed(2) + " tok/s");
     }
     el.textContent = parts.join(" · ");
     if (meta.system_fingerprint) {
@@ -235,6 +429,42 @@
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
+  }
+
+  /** Strip attachment manifest + vision hint from bubble; full `content` stays for model. */
+  function userDisplayBody(content, hasManifest) {
+    if (!hasManifest || typeof content !== "string") {
+      return content;
+    }
+    let t = content.replace(/\r\n/g, "\n");
+    t = t.replace(/\n\n---\nAttached files[\s\S]*$/m, "");
+    t = t.replace(/\n\n\[Vision \(image input\) is off[^\]]+\]/, "");
+    t = t.trim();
+    t = t
+      .replace(
+        /^User attached files \(see list below — use stt with exact file_name to transcribe audio to text\)\.\s*/m,
+        "",
+      )
+      .trim();
+    return t;
+  }
+
+  /** Static SVG — speaker bars. @returns {SVGElement} */
+  function audioAttachIcon() {
+    const tpl = document.createElement("template");
+    tpl.innerHTML =
+      '<svg class="msg-attach-chip__svg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M8 9v6M16 7v10M4 10v4M20 8v8"/></svg>';
+    const n = tpl.content.firstChild;
+    return /** @type {SVGElement} */ (n);
+  }
+
+  /** @returns {SVGElement} */
+  function fileAttachIcon() {
+    const tpl = document.createElement("template");
+    tpl.innerHTML =
+      '<svg class="msg-attach-chip__svg" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>';
+    const n = tpl.content.firstChild;
+    return /** @type {SVGElement} */ (n);
   }
 
   /** @param {string} roleLower user|assistant|system @param {number|undefined} atMs */
@@ -295,6 +525,20 @@
       if (m.usageMeta && typeof m.usageMeta === "object") o.usageMeta = m.usageMeta;
       if (m.source === "scheduler") o.source = "scheduler";
       if (m.errReply === true) o.errReply = true;
+      if (m.displayAttachments && m.displayAttachments.length) {
+        o.displayAttachments = m.displayAttachments.map((a) => {
+          /** @type {Record<string, unknown>} */
+          const x = { name: a.name, kind: a.kind };
+          if (
+            a.kind === "image" &&
+            typeof a.thumbnailDataUrl === "string" &&
+            a.thumbnailDataUrl.startsWith("data:")
+          ) {
+            x.thumbnailDataUrl = a.thumbnailDataUrl;
+          }
+          return x;
+        });
+      }
       return o;
     });
   }
@@ -345,6 +589,41 @@
       if (typeof u.system_fingerprint === "string") row.usageMeta.system_fingerprint = u.system_fingerprint;
     }
     if (o.errReply === true) row.errReply = true;
+    if (Array.isArray(o.displayAttachments)) {
+      /** @type {RowAttachment[]} */
+      const list = [];
+      for (const raw of o.displayAttachments) {
+        if (!raw || typeof raw !== "object") {
+          continue;
+        }
+        const x = /** @type {Record<string, unknown>} */ (raw);
+        const name = typeof x.name === "string" ? x.name : "";
+        const k = x.kind;
+        const kind = k === "audio" ? "audio" : k === "file" ? "file" : "image";
+        if (!name) {
+          continue;
+        }
+        /** @type {RowAttachment} */
+        const a = { name, kind };
+        if (
+          kind === "image" &&
+          typeof x.thumbnailDataUrl === "string" &&
+          x.thumbnailDataUrl.startsWith("data:")
+        ) {
+          a.thumbnailDataUrl = x.thumbnailDataUrl;
+        }
+        list.push(a);
+      }
+      if (list.length) {
+        row.displayAttachments = list;
+      }
+    }
+    if (!(row.displayAttachments && row.displayAttachments.length)) {
+      const hydrated = hydrateAttachmentsFromContent(row.content);
+      if (hydrated) {
+        row.displayAttachments = hydrated;
+      }
+    }
     return row;
   }
 
@@ -405,6 +684,76 @@
         '<div class="msg-stream__answer">' +
         esc(m.content) +
         "</div></div>";
+    } else if (r === "user" && m.displayAttachments && m.displayAttachments.length) {
+      div.insertAdjacentHTML("afterbegin", roleHeadHtml(r, m.atMs));
+      const bodyWrap = document.createElement("div");
+      bodyWrap.className = "body body--with-attach";
+      const strip = document.createElement("div");
+      strip.className = "msg-attach-strip";
+      strip.setAttribute("aria-label", "Attached files");
+      for (const a of m.displayAttachments) {
+        const chip = document.createElement("div");
+        chip.className = "msg-attach-chip msg-attach-chip--" + a.kind;
+        chip.title = a.name;
+        if (a.kind === "image") {
+          const src = a.thumbnailDataUrl || a.previewUrl;
+          if (src) {
+            const img = document.createElement("img");
+            img.className = "msg-attach-chip__img";
+            img.src = src;
+            img.alt = "";
+            img.loading = "lazy";
+            chip.appendChild(img);
+          } else {
+            const hi = document.createElement("div");
+            hi.className = "msg-attach-chip__ico-wrap";
+            hi.appendChild(fileAttachIcon());
+            chip.appendChild(hi);
+          }
+        } else if (a.kind === "audio") {
+          const hi = document.createElement("div");
+          hi.className = "msg-attach-chip__ico-wrap";
+          hi.appendChild(audioAttachIcon());
+          chip.appendChild(hi);
+        } else {
+          const hi = document.createElement("div");
+          hi.className = "msg-attach-chip__ico-wrap";
+          hi.appendChild(fileAttachIcon());
+          chip.appendChild(hi);
+        }
+        const nm = document.createElement("span");
+        nm.className = "msg-attach-chip__name";
+        nm.textContent = a.name;
+        chip.appendChild(nm);
+        strip.appendChild(chip);
+      }
+      bodyWrap.appendChild(strip);
+      const textPart = userDisplayBody(m.content, true);
+      if (textPart) {
+        const p = document.createElement("div");
+        p.className = "msg-attach-text";
+        p.textContent = textPart;
+        bodyWrap.appendChild(p);
+      }
+      div.appendChild(bodyWrap);
+      if (
+        orphanUserNeedsRetry() &&
+        typeof index === "number" &&
+        index === history.length - 1
+      ) {
+        const row = document.createElement("div");
+        row.className = "msg-user-actions";
+        const rb = document.createElement("button");
+        rb.type = "button";
+        rb.className = "btn-msg-retry";
+        rb.textContent = "Retry";
+        rb.setAttribute("aria-label", "Retry sending this message");
+        rb.addEventListener("click", () => {
+          void executeAgentChatTurn();
+        });
+        row.appendChild(rb);
+        div.appendChild(row);
+      }
     } else {
       div.innerHTML = head + '<div class="body">' + esc(m.content) + "</div>";
       if (
@@ -609,10 +958,17 @@
     elMsgs.appendChild(pend.el);
     scrollMsgsToBottom();
 
-    const payloads = history.map((h) => ({
-      role: h.role === "assistant" ? "assistant" : h.role === "system" ? "system" : "user",
-      content: h.content,
-    }));
+    const payloads = history.map((h) => {
+      /** @type {Record<string, unknown>} */
+      const o = {
+        role: h.role === "assistant" ? "assistant" : h.role === "system" ? "system" : "user",
+        content: h.content,
+      };
+      if (h.role === "user" && h.images && h.images.length) {
+        o.images = h.images;
+      }
+      return o;
+    });
 
     const t0 = Date.now();
     let streamedReasoningAcc = "";
@@ -720,9 +1076,17 @@
     }
 
     elInput.value = "";
-    const { userContent, staged } = await buildUserMessageAndStaged(text);
+    const { userContent, staged, images, displayAttachments } = await buildUserMessageAndStaged(text);
     lastTurnStagedAudio = staged.length ? staged : null;
-    history.push({ role: "user", content: userContent, atMs: Date.now() });
+    /** @type {typeof history[number]} */
+    const urow = { role: "user", content: userContent, atMs: Date.now() };
+    if (images.length) {
+      urow.images = images;
+    }
+    if (displayAttachments.length) {
+      urow.displayAttachments = displayAttachments;
+    }
+    history.push(urow);
     await executeAgentChatTurn();
   }
 
@@ -762,8 +1126,15 @@
       void (async () => {
         for (const f of picked) {
           try {
+            const previewUrl =
+              isProbablyImage(f.name, f.type || "") ? URL.createObjectURL(f) : undefined;
             const ab = await f.arrayBuffer();
-            pendingAttachments.push({ name: f.name, type: f.type || "application/octet-stream", ab });
+            pendingAttachments.push({
+              name: f.name,
+              type: f.type || "application/octet-stream",
+              ab,
+              ...(previewUrl ? { previewUrl } : {}),
+            });
           } catch (_) {
             /* skip */
           }

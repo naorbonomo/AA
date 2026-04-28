@@ -165,7 +165,7 @@ body {
 .compose {
   display: flex;
   flex-direction: column;
-  gap: 0.5vh;
+  gap: 0;
   padding: 1vh 1.2vw;
   border-top: var(--hairline) solid var(--border);
   background: #0c0c12;
@@ -174,95 +174,112 @@ body {
   min-height: 0;
 }
 
-.compose-row {
-  display: flex;
-  gap: 0.6vw;
-  align-items: flex-end;
-  width: 100%;
-  min-height: 0;
+.field--vision {
+  margin-top: 0.35rem;
 }
 
-.compose-tools {
+/* Chat composer: one rounded shell, + lower-left, circular send lower-right (IDE-like). */
+.compose-shell {
+  display: flex;
+  flex-direction: column;
+  background: rgba(22, 22, 28, 0.95);
+  border: var(--hairline) solid var(--border);
+  border-radius: 0.65rem;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.compose-shell__input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  resize: vertical;
+  min-height: 4.5rem;
+  max-height: 22vh;
+  padding: 0.75rem 0.9rem 0.35rem;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.compose-shell__input::placeholder {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.compose-shell__input:focus {
+  outline: none;
+}
+
+.compose-shell__bar {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
-  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.25rem 0.45rem 0.45rem 0.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.compose-tools__btn {
-  padding: 0.35rem 0.65rem;
-  font-size: 82%;
-  background: var(--panel);
-  border: var(--hairline) solid var(--border);
-  color: var(--text);
-  border-radius: var(--radius);
+.compose-shell__add {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: rgba(245, 245, 250, 0.72);
   cursor: pointer;
+  line-height: 0;
 }
 
-.compose-tools__btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
+.compose-shell__add:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
 }
 
-.compose-tools__btn:disabled {
-  opacity: 0.55;
+.compose-shell__add:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-.compose-tools__status {
-  font-size: 82%;
-  color: var(--muted);
-  min-height: 1.2em;
-}
-
-.compose-attach-list {
-  flex: 1 1 12rem;
-  font-size: 78%;
+.compose-shell__attach-meta {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 76%;
   color: var(--muted);
   line-height: 1.35;
   word-break: break-word;
 }
 
-.compose-row textarea {
-  flex: 1 1 40%;
-  resize: vertical;
-  min-height: 6vh;
-  max-height: 22vh;
-  width: 100%;
-  background: var(--panel);
-  border: var(--hairline) solid var(--border);
-  color: var(--text);
-  padding: 0.8vh 0.9vw;
-  border-radius: var(--radius);
-  font: inherit;
-  line-height: 1.4;
-}
-
-.compose-row textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.compose-row button {
-  align-self: flex-end;
-  min-width: 12%;
-  min-height: 5.5vh;
-  background: var(--panel);
-  border: var(--hairline) solid var(--border);
-  color: var(--text);
-  padding: 0.6vh 1vw;
-  border-radius: var(--radius);
+.compose-shell__send {
+  flex-shrink: 0;
+  width: 2.35rem;
+  height: 2.35rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #32323c;
+  color: rgba(250, 250, 252, 0.95);
   cursor: pointer;
-  font-size: 90%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-.compose-row button:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
+.compose-shell__send:hover:not(:disabled) {
+  background: #3d3d49;
+  color: var(--text);
 }
 
-.compose-row button:disabled {
-  opacity: 0.55;
+.compose-shell__send:disabled {
+  opacity: 0.42;
   cursor: not-allowed;
 }
 
@@ -838,6 +855,81 @@ body {
 
 .msg.role-user .role-h__label {
   color: var(--user);
+}
+
+.msg .body.body--with-attach {
+  white-space: normal;
+}
+
+.msg-attach-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 0.45rem;
+}
+
+.msg-attach-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  max-width: 5.75rem;
+  min-width: 0;
+}
+
+.msg-attach-chip--audio,
+.msg-attach-chip--file {
+  flex-direction: row;
+  align-items: center;
+  max-width: min(100%, 18rem);
+  align-self: flex-start;
+  padding: 0.28rem 0.5rem;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.22);
+  border: var(--hairline) solid rgba(255, 255, 255, 0.06);
+  gap: 0.45rem;
+}
+
+.msg-attach-chip__img {
+  display: block;
+  width: 4.25rem;
+  height: 4.25rem;
+  object-fit: cover;
+  border-radius: calc(var(--radius) * 0.85);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.msg-attach-chip__ico-wrap {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: rgba(191, 219, 254, 0.82);
+}
+
+.msg-attach-chip__svg {
+  display: block;
+}
+
+.msg-attach-chip--audio .msg-attach-chip__name,
+.msg-attach-chip--file .msg-attach-chip__name {
+  max-width: 14rem;
+}
+
+.msg-attach-chip__name {
+  font-size: 70%;
+  line-height: 1.2;
+  color: var(--muted);
+  max-width: 5.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-attach-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 94%;
 }
 
 .msg-user-actions {

@@ -44,10 +44,20 @@ export type ChatHistoryRow = {
   usageMeta?: ChatHistoryUsageMeta;
   /** Persisted from renderer when assistant row is an HTTP/agent failure bubble. */
   errReply?: boolean;
+  /** User bubble attachment chips (image thumbnails as data URLs). */
+  displayAttachments?: ChatHistoryAttachment[];
 };
 
 const MAX_ROWS = 500;
 const MAX_FIELD = 2_000_000;
+/** Max length per persisted `data:` thumbnail (~2.5 MB ASCII). */
+const MAX_THUMB_DATA_URL = 2_500_000;
+
+export type ChatHistoryAttachment = {
+  name: string;
+  kind: "image" | "audio" | "file";
+  thumbnailDataUrl?: string;
+};
 
 function clampStr(s: unknown, max: number): string {
   if (typeof s !== "string") return "";
@@ -108,6 +118,27 @@ function normalizeRow(raw: unknown): ChatHistoryRow | null {
   }
   if (o.errReply === true) {
     row.errReply = true;
+  }
+  if (Array.isArray(o.displayAttachments)) {
+    const list: ChatHistoryAttachment[] = [];
+    for (const raw of o.displayAttachments) {
+      if (!raw || typeof raw !== "object") continue;
+      const ao = raw as Record<string, unknown>;
+      const name = typeof ao.name === "string" ? ao.name.trim() : "";
+      const k = ao.kind;
+      const kind: ChatHistoryAttachment["kind"] =
+        k === "audio" ? "audio" : k === "file" ? "file" : "image";
+      if (!name) continue;
+      const att: ChatHistoryAttachment = { name, kind };
+      const thumb = ao.thumbnailDataUrl;
+      if (typeof thumb === "string" && thumb.startsWith("data:") && thumb.length <= MAX_THUMB_DATA_URL) {
+        att.thumbnailDataUrl = thumb;
+      }
+      list.push(att);
+    }
+    if (list.length) {
+      row.displayAttachments = list;
+    }
   }
   return row;
 }

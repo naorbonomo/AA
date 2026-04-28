@@ -168,6 +168,7 @@ function mergeLlm(u: UserLlm | undefined): ResolvedLlm {
       x.httpTimeoutMs > 0
         ? x.httpTimeoutMs
         : llmDef.LLM_DEFAULT_HTTP_TIMEOUT_MS,
+    vision: x.vision === true,
   };
 }
 

@@ -95,7 +95,15 @@ export async function fetchOpenAiCompatibleModelIds(): Promise<
 
 export type ChatRole = "user" | "assistant" | "system";
 
-export type ChatMessage = { role: ChatRole; content: string };
+/** One user-turn image for vision-capable chat models (data URL built at API boundary). */
+export type ChatImagePart = { fileName: string; mediaType: string; base64: string };
+
+export type ChatMessage = {
+  role: ChatRole;
+  content: string;
+  /** User images only; included in API when Settings → Vision is enabled. */
+  images?: ChatImagePart[];
+};
 
 export type ChatCompletionArgs = {
   messages: ChatMessage[];
@@ -250,6 +258,11 @@ export async function chatCompletion(args: ChatCompletionArgs): Promise<string> 
   return text;
 }
 
+/** OpenAI-style multimodal user fragment. */
+export type ApiUserContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 /** OpenAI-compat message with optional `tool_calls` / `tool` results (agent loops). */
 export type ApiToolCallPart = {
   id: string;
@@ -259,7 +272,7 @@ export type ApiToolCallPart = {
 
 export type CompletionApiMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | { role: "user"; content: string | ApiUserContentPart[] }
   | {
       role: "assistant";
       content?: string | null;
@@ -267,6 +280,34 @@ export type CompletionApiMessage =
       tool_calls?: ApiToolCallPart[];
     }
   | { role: "tool"; tool_call_id: string; content: string };
+
+/** Build one user message for the completions API (multimodal when `vision` and images present). */
+export function completionUserMessage(
+  m: ChatMessage,
+  vision: boolean,
+): Extract<CompletionApiMessage, { role: "user" }> {
+  const text = typeof m.content === "string" ? m.content : String(m.content);
+  const imgs = vision && m.images?.length ? m.images : [];
+  if (!imgs.length) {
+    return { role: "user", content: text };
+  }
+  const parts: ApiUserContentPart[] = [{ type: "text", text: text }];
+  for (const img of imgs) {
+    const mt = (img.mediaType || "image/png").trim() || "image/png";
+    const b64 = (img.base64 || "").trim();
+    if (!b64) {
+      continue;
+    }
+    parts.push({
+      type: "image_url",
+      image_url: { url: `data:${mt};base64,${b64}` },
+    });
+  }
+  if (parts.length === 1) {
+    return { role: "user", content: text };
+  }
+  return { role: "user", content: parts };
+}
 
 /** Non-streaming `/v1/chat/completions`; returns parsed JSON (tool_calls + usage when supported). */
 export async function completionPost(params: {

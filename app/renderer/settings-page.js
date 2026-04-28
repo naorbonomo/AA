@@ -15,6 +15,7 @@
   const elLlModel = document.getElementById("set-llm-model");
   const elLlTemp = document.getElementById("set-llm-temp");
   const elLlTo = document.getElementById("set-llm-timeout");
+  const elLlVision = document.getElementById("set-llm-vision");
   const elLogFile = document.getElementById("set-log-file");
   const elLogCon = document.getElementById("set-log-console");
   const elAgentR = document.getElementById("set-agent-rounds");
@@ -291,6 +292,9 @@
     syncLlmModelRow(llmPresetById(pid), r.llm.model);
     elLlTemp.value = String(r.llm.temperature);
     elLlTo.value = String(r.llm.httpTimeoutMs);
+    if (elLlVision instanceof HTMLInputElement) {
+      elLlVision.checked = !!r.llm.vision;
+    }
     elLogFile.checked = !!r.logging.logToFile;
     elLogCon.checked = !!r.logging.logToConsole;
     elAgentR.value = String(r.agent.maxToolRounds);
@@ -416,6 +420,7 @@
         })(),
         temperature: Number(elLlTemp.value),
         httpTimeoutMs: Number(elLlTo.value),
+        ...(elLlVision instanceof HTMLInputElement ? { vision: elLlVision.checked } : {}),
       },
       logging: {
         logToFile: elLogFile.checked,

@@ -9,6 +9,8 @@ export type UserLlm = {
   model?: string;
   temperature?: number;
   httpTimeoutMs?: number;
+  /** When true, user-attached images are sent as OpenAI-style `image_url` parts (model must support vision). */
+  vision?: boolean;
 };
 
 export type UserLogging = {
@@ -61,6 +63,7 @@ export type ResolvedLlm = {
   model: string;
   temperature: number;
   httpTimeoutMs: number;
+  vision: boolean;
 };
 
 export type ResolvedLogging = {
