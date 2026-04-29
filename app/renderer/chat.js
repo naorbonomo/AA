@@ -931,6 +931,9 @@
     if (ok && typeof po.text === "string") body = po.text;
     else if (typeof po.error === "string") body = po.error;
     else body = ok ? "" : "error";
+    const content = "[Scheduled: " + title + "]\n\n" + body;
+    /** Main may append same completion to disk before history loads — skip duplicate IPC row */
+    if (history.some((r) => r.role === "assistant" && r.content === content)) return;
     const trace = formatAgentSteps(po.steps);
     const usageRaw =
       po.usage !== null && po.usage !== undefined && typeof po.usage === "object"
@@ -948,7 +951,7 @@
       role: "assistant",
       source: "scheduler",
       atMs: Date.now(),
-      content: "[Scheduled: " + title + "]\n\n" + body,
+      content,
       ...(trace ? { agentTrace: trace } : {}),
       ...(ttsClips.length ? { agentTtsClips: ttsClips } : {}),
       ...(usageMeta ? { usageMeta } : {}),

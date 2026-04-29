@@ -4,6 +4,7 @@ import { BrowserWindow, Notification } from "electron";
 
 import type { AgentStepPayload } from "./agent-runner.js";
 import { runChatWithWebSearchFromSettings } from "./agent-runner.js";
+import { appendSchedulerJobToDisk } from "./scheduler-job-chat-persist.js";
 import type { ChatMessage, ChatUsageSnapshot } from "./llm.js";
 import type { ScheduledJob } from "./scheduler-store.js";
 import { isJobDue, listScheduledJobs, recordJobRun } from "./scheduler-store.js";
@@ -80,6 +81,17 @@ async function executeJob(job: ScheduledJob): Promise<void> {
       steps: out.steps,
       usage: out.usage ?? null,
     };
+    try {
+      appendSchedulerJobToDisk({
+        title: job.title,
+        ok: true,
+        text: out.text,
+        steps: out.steps,
+        usage: out.usage ?? null,
+      });
+    } catch (e) {
+      log.warn("scheduler chat persist failed", { err: e instanceof Error ? e.message : String(e) });
+    }
     broadcast("scheduler:job-finished", payload);
     if (job.notify) {
       showOsNotification(job.title, out.text.replace(/\s+/g, " ").slice(0, 480));
@@ -98,6 +110,15 @@ async function executeJob(job: ScheduledJob): Promise<void> {
       ok: false,
       error: msg,
     };
+    try {
+      appendSchedulerJobToDisk({
+        title: job.title,
+        ok: false,
+        error: msg,
+      });
+    } catch (e) {
+      log.warn("scheduler chat persist failed", { err: e instanceof Error ? e.message : String(e) });
+    }
     broadcast("scheduler:job-finished", payload);
     if (job.notify) {
       showOsNotification(job.title, `Failed: ${msg.slice(0, 400)}`);
