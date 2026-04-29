@@ -9,6 +9,7 @@ import type { SecretsPayload } from "../../config/secrets_config.js";
 import type {
   UserAgent,
   UserAppTime,
+  UserChat,
   UserLogging,
   UserLlm,
   UserSettings,
@@ -38,7 +39,8 @@ import {
 } from "../../services/settings-store.js";
 import { getLogger } from "../../utils/logger.js";
 import { utcMsToWallDatetimeLocalValue, wallDateTimeInZoneToUtcMs } from "../../utils/app-time.js";
-import { initializeChatHistoryStore, readChatHistory, writeChatHistory } from "../../services/chat-history-store.js";
+import { initializeChatHistoryStore, writeChatHistory } from "../../services/chat-history-store.js";
+import { readChatHistoryForDisplay } from "../../services/chat-display-merge.js";
 import { initializeTelegramHistoryStore } from "../../services/telegram-history-store.js";
 import {
   configureTelegramAppIconPath,
@@ -111,7 +113,8 @@ function createWindow(): void {
 
 ipcMain.handle("chat-history:get", () => {
   try {
-    return { ok: true as const, rows: readChatHistory() };
+    const mirror = getResolvedSettings().chat.showTelegramMirror;
+    return { ok: true as const, rows: readChatHistoryForDisplay(mirror) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     log.error("chat-history:get", msg);
@@ -527,6 +530,15 @@ function sanitizeSchedulerCreate(raw: unknown): CreateScheduledJobInput {
   const title = typeof o.title === "string" ? o.title : undefined;
   const enabled = typeof o.enabled === "boolean" ? o.enabled : undefined;
   const notify = typeof o.notify === "boolean" ? o.notify : undefined;
+  const deliverDesktop = typeof o.deliverDesktop === "boolean" ? o.deliverDesktop : undefined;
+  const deliverTelegram = typeof o.deliverTelegram === "boolean" ? o.deliverTelegram : undefined;
+  let telegramChatId: number | undefined;
+  if (o.telegramChatId !== undefined && o.telegramChatId !== null) {
+    const tc = Number(o.telegramChatId);
+    if (Number.isFinite(tc)) {
+      telegramChatId = Math.floor(tc);
+    }
+  }
   const scheduleRaw = o.schedule;
   let schedule: CreateScheduledJobInput["schedule"] = { kind: "interval", intervalMinutes: 60 };
   if (scheduleRaw && typeof scheduleRaw === "object") {
@@ -541,7 +553,16 @@ function sanitizeSchedulerCreate(raw: unknown): CreateScheduledJobInput {
       };
     }
   }
-  return { prompt, title, enabled, notify, schedule };
+  return {
+    prompt,
+    title,
+    enabled,
+    notify,
+    deliverDesktop,
+    deliverTelegram,
+    ...(telegramChatId !== undefined ? { telegramChatId } : {}),
+    schedule,
+  };
 }
 
 function sanitizeSchedulerPatch(raw: unknown): UpdateScheduledJobPatch {
@@ -561,6 +582,22 @@ function sanitizeSchedulerPatch(raw: unknown): UpdateScheduledJobPatch {
   }
   if (typeof o.notify === "boolean") {
     patch.notify = o.notify;
+  }
+  if (typeof o.deliverDesktop === "boolean") {
+    patch.deliverDesktop = o.deliverDesktop;
+  }
+  if (typeof o.deliverTelegram === "boolean") {
+    patch.deliverTelegram = o.deliverTelegram;
+  }
+  if (Object.prototype.hasOwnProperty.call(o, "telegramChatId")) {
+    if (o.telegramChatId === null) {
+      patch.telegramChatId = null;
+    } else {
+      const tc = Number(o.telegramChatId);
+      if (Number.isFinite(tc)) {
+        patch.telegramChatId = Math.floor(tc);
+      }
+    }
   }
   if (o.schedule && typeof o.schedule === "object") {
     const s = o.schedule as Record<string, unknown>;
@@ -665,8 +702,29 @@ function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
       const p = Number(tg.webhookPort);
       if (Number.isFinite(p)) telegram.webhookPort = Math.floor(p);
     }
+    if (Object.prototype.hasOwnProperty.call(tg, "schedulerDefaultChatId")) {
+      if (tg.schedulerDefaultChatId === null) {
+        telegram.schedulerDefaultChatId = null;
+      } else if (tg.schedulerDefaultChatId !== undefined) {
+        const c = Number(tg.schedulerDefaultChatId);
+        if (Number.isFinite(c)) {
+          telegram.schedulerDefaultChatId = Math.floor(c);
+        }
+      }
+    }
     if (Object.keys(telegram).length) {
       out.telegram = telegram as UserTelegram;
+    }
+  }
+
+  if ("chat" in o && o.chat && typeof o.chat === "object") {
+    const ch = o.chat as Record<string, unknown>;
+    const chat: Partial<UserChat> = {};
+    if (typeof ch.showTelegramMirror === "boolean") {
+      chat.showTelegramMirror = ch.showTelegramMirror;
+    }
+    if (Object.keys(chat).length) {
+      out.chat = chat as UserChat;
     }
   }
 

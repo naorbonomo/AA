@@ -49,6 +49,17 @@ export type UserTelegram = {
   usePolling?: boolean;
   /** HTTP `POST /telegram/webhook` on this port; 0 = off (default). Bind `127.0.0.1` only — use tunnel for cloud. */
   webhookPort?: number;
+  /**
+   * Fallback Telegram `chat_id` when a scheduled job delivers to Telegram but has no per-job id.
+   * When omitted/null, first inbound Telegram message (any update) saves that chat id here.
+   */
+  schedulerDefaultChatId?: number | null;
+};
+
+/** Chat UI-only preferences (no model impact). */
+export type UserChat = {
+  /** When true, Chat tab merges Telegram transcripts (read-only) with desktop history, sorted by time. */
+  showTelegramMirror?: boolean;
 };
 
 export type UserSettings = {
@@ -58,6 +69,7 @@ export type UserSettings = {
   appTime?: UserAppTime;
   whisper?: UserWhisper;
   telegram?: UserTelegram;
+  chat?: UserChat;
 
   /** @deprecated Legacy flat layout — migrated on load. */
   llmBaseUrl?: string;
@@ -108,6 +120,12 @@ export type ResolvedWhisper = {
 export type ResolvedTelegram = {
   usePolling: boolean;
   webhookPort: number;
+  /** Resolved integer chat id or null when unset. */
+  schedulerDefaultChatId: number | null;
+};
+
+export type ResolvedChat = {
+  showTelegramMirror: boolean;
 };
 
 export type ResolvedAppSettings = {
@@ -117,4 +135,5 @@ export type ResolvedAppSettings = {
   appTime: ResolvedAppTime;
   whisper: ResolvedWhisper;
   telegram: ResolvedTelegram;
+  chat: ResolvedChat;
 };

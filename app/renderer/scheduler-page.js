@@ -94,6 +94,12 @@
       const promptText = typeof j.prompt === "string" ? j.prompt : "";
       const enabled = j.enabled !== false;
       const notify = j.notify !== false;
+      const deliverDesktop = j.deliverDesktop !== false;
+      const deliverTelegram = j.deliverTelegram === true;
+      const tgChat =
+        typeof j.telegramChatId === "number" && Number.isFinite(j.telegramChatId)
+          ? j.telegramChatId
+          : null;
       const nextMs = typeof j.nextRunAtMs === "number" && Number.isFinite(j.nextRunAtMs) ? j.nextRunAtMs : null;
       let nextStr = "—";
       if (nextMs !== null) {
@@ -126,7 +132,9 @@
         formatScheduleLine(j) +
         " · Next: " +
         nextStr +
-        (notify ? "" : " · no notify");
+        (notify ? "" : " · no OS notify") +
+        (deliverDesktop ? "" : " · no desktop push") +
+        (deliverTelegram ? " · Telegram" + (tgChat != null ? " → " + tgChat : "") : "");
       sumText.appendChild(titleEl);
       sumText.appendChild(subEl);
       sum.appendChild(chev);
@@ -211,9 +219,27 @@
         await refreshScheduler();
       });
 
+      const bDesk = document.createElement("button");
+      bDesk.type = "button";
+      bDesk.textContent = deliverDesktop ? "Desktop push off" : "Desktop push on";
+      bDesk.addEventListener("click", async () => {
+        await aa.schedulerUpdate({ id, patch: { deliverDesktop: !deliverDesktop } });
+        await refreshScheduler();
+      });
+
+      const bTg = document.createElement("button");
+      bTg.type = "button";
+      bTg.textContent = deliverTelegram ? "Telegram off" : "Telegram on";
+      bTg.addEventListener("click", async () => {
+        await aa.schedulerUpdate({ id, patch: { deliverTelegram: !deliverTelegram } });
+        await refreshScheduler();
+      });
+
       act.appendChild(bRun);
       act.appendChild(bToggle);
       act.appendChild(bNotify);
+      act.appendChild(bDesk);
+      act.appendChild(bTg);
       act.appendChild(bDel);
       body.appendChild(act);
       det.appendChild(body);

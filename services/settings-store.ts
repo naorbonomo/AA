@@ -15,12 +15,14 @@ import * as whisperDef from "../config/whisper_config.js";
 import type {
   ResolvedAgent,
   ResolvedAppSettings,
+  ResolvedChat,
   ResolvedLlm,
   ResolvedLogging,
   ResolvedTelegram,
   ResolvedWhisper,
   UserAgent,
   UserAppTime,
+  UserChat,
   UserLlm,
   UserLogging,
   UserSettings,
@@ -138,6 +140,22 @@ function normalizeDiskShape(raw: unknown): UserSettings {
     if (typeof tg.webhookPort === "number" && Number.isFinite(tg.webhookPort)) {
       telegram.webhookPort = Math.floor(tg.webhookPort);
     }
+    if (tg.schedulerDefaultChatId === null) {
+      telegram.schedulerDefaultChatId = null;
+    } else if (typeof tg.schedulerDefaultChatId === "number" && Number.isFinite(tg.schedulerDefaultChatId)) {
+      const c = Math.floor(tg.schedulerDefaultChatId);
+      if (Number.isInteger(c)) {
+        telegram.schedulerDefaultChatId = c;
+      }
+    }
+  }
+
+  const chat: UserChat = {};
+  if (typeof o.chat === "object" && o.chat !== null) {
+    const ch = o.chat as Record<string, unknown>;
+    if (typeof ch.showTelegramMirror === "boolean") {
+      chat.showTelegramMirror = ch.showTelegramMirror;
+    }
   }
 
   const out: UserSettings = {};
@@ -147,6 +165,7 @@ function normalizeDiskShape(raw: unknown): UserSettings {
   if (Object.keys(appTime).length) out.appTime = appTime;
   if (Object.keys(whisper).length) out.whisper = whisper;
   if (Object.keys(telegram).length) out.telegram = telegram;
+  if (Object.keys(chat).length) out.chat = chat;
   return out;
 }
 
@@ -237,9 +256,25 @@ function mergeTelegram(u: UserTelegram | undefined): ResolvedTelegram {
   const wp = x.webhookPort;
   const webhookPort =
     typeof wp === "number" && Number.isFinite(wp) && wp > 0 && wp < 65536 ? Math.floor(wp) : 0;
+  let schedulerDefaultChatId: number | null = null;
+  const sc = x.schedulerDefaultChatId;
+  if (sc !== null && sc !== undefined && typeof sc === "number" && Number.isFinite(sc)) {
+    const c = Math.floor(sc);
+    if (Number.isInteger(c)) {
+      schedulerDefaultChatId = c;
+    }
+  }
   return {
     usePolling: x.usePolling !== false,
     webhookPort,
+    schedulerDefaultChatId,
+  };
+}
+
+function mergeChat(u: UserChat | undefined): ResolvedChat {
+  const x = u ?? {};
+  return {
+    showTelegramMirror: x.showTelegramMirror === true,
   };
 }
 
@@ -251,6 +286,7 @@ function mergeUserWithDefaults(u: UserSettings): ResolvedAppSettings {
     appTime: mergeResolvedAppTime(u.appTime),
     whisper: mergeWhisper(u.whisper),
     telegram: mergeTelegram(u.telegram),
+    chat: mergeChat(u.chat),
   };
 }
 
@@ -273,6 +309,21 @@ export function reloadSettingsFromDisk(): ResolvedAppSettings {
   return loadMergedFromDisk();
 }
 
+/**
+ * When scheduler has no default Telegram chat, persist `chatId` from inbound Telegram activity
+ * (`user-settings.json` → `telegram.schedulerDefaultChatId`). Skips if user already set a numeric id.
+ */
+export function rememberTelegramSchedulerDefaultChatIfUnset(chatId: number): void {
+  if (typeof chatId !== "number" || !Number.isInteger(chatId)) {
+    return;
+  }
+  const cur = getResolvedSettings().telegram.schedulerDefaultChatId;
+  if (cur !== null && cur !== undefined) {
+    return;
+  }
+  saveUserSettingsPatch({ telegram: { schedulerDefaultChatId: chatId } });
+}
+
 function writeUserFileNested(u: UserSettings): void {
   const p = getSettingsFilePath();
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -281,13 +332,23 @@ function writeUserFileNested(u: UserSettings): void {
 
 export function saveUserSettingsPatch(patch: Partial<UserSettings>): ResolvedAppSettings {
   const cur = normalizeDiskShape(readUserFileRaw());
+  const mergedTg: UserTelegram = { ...(cur.telegram ?? {}), ...(patch.telegram ?? {}) };
+  if (patch.telegram && Object.prototype.hasOwnProperty.call(patch.telegram, "schedulerDefaultChatId")) {
+    const c = patch.telegram.schedulerDefaultChatId;
+    if (c === null || c === undefined) {
+      delete mergedTg.schedulerDefaultChatId;
+    } else if (typeof c === "number" && Number.isFinite(c)) {
+      mergedTg.schedulerDefaultChatId = Math.floor(c);
+    }
+  }
   const next: UserSettings = {
     llm: { ...(cur.llm ?? {}), ...(patch.llm ?? {}) },
     logging: { ...(cur.logging ?? {}), ...(patch.logging ?? {}) },
     agent: { ...(cur.agent ?? {}), ...(patch.agent ?? {}) },
     appTime: { ...(cur.appTime ?? {}), ...(patch.appTime ?? {}) },
     whisper: { ...(cur.whisper ?? {}), ...(patch.whisper ?? {}) },
-    telegram: { ...(cur.telegram ?? {}), ...(patch.telegram ?? {}) },
+    telegram: mergedTg,
+    chat: { ...(cur.chat ?? {}), ...(patch.chat ?? {}) },
   };
 
   writeUserFileNested(trimEmptyBranches(next));
@@ -357,8 +418,26 @@ function trimEmptyBranches(s: UserSettings): UserSettings {
         tg.webhookPort = p;
       }
     }
+    if (Object.prototype.hasOwnProperty.call(s.telegram, "schedulerDefaultChatId")) {
+      const c = s.telegram.schedulerDefaultChatId;
+      if (c !== null && c !== undefined && typeof c === "number" && Number.isFinite(c)) {
+        const n = Math.floor(c);
+        if (Number.isInteger(n)) {
+          tg.schedulerDefaultChatId = n;
+        }
+      }
+    }
     if (Object.keys(tg).length) {
       out.telegram = tg;
+    }
+  }
+  if (s.chat) {
+    const ch: UserChat = {};
+    if (typeof s.chat.showTelegramMirror === "boolean") {
+      ch.showTelegramMirror = s.chat.showTelegramMirror;
+    }
+    if (Object.keys(ch).length) {
+      out.chat = ch;
     }
   }
   return out;

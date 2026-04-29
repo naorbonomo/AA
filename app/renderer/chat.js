@@ -13,12 +13,13 @@
    * msPerToken = wallMs / completion_tokens when known (footer tok/s); else wallMs / total_tokens.
    */
   /** @typedef {{ name: string, kind: "image"|"audio"|"file", previewUrl?: string, thumbnailDataUrl?: string }} RowAttachment */
-  /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, agentToolCount?: number, agentTtsClips?: { dataUrl: string }[], source?: "app" | "telegram" | "scheduler", errReply?: boolean, images?: { fileName: string, mediaType: string, base64: string }[], displayAttachments?: RowAttachment[] }} Row */
+  /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, agentToolCount?: number, agentTtsClips?: { dataUrl: string }[], source?: "app" | "telegram" | "scheduler", telegramChatId?: number, errReply?: boolean, images?: { fileName: string, mediaType: string, base64: string }[], displayAttachments?: RowAttachment[] }} Row */
 
   const aa = window.aaDesktop;
 
   /** True while agent request running — hides Retry on orphan user bubble. */
   let agentBusy = false;
+  let mirrorRefreshQueued = false;
   if (!aa) {
     document.body.innerHTML =
       '<p style="color:#fca5a5;padding:1.2vmin;font-family:system-ui">Preload failed — aaDesktop unavailable.</p>';
@@ -470,9 +471,14 @@
     return /** @type {SVGElement} */ (n);
   }
 
-  /** @param {string} roleLower user|assistant|system @param {number|undefined} atMs */
-  function roleHeadHtml(roleLower, atMs) {
-    const label = esc(roleLower);
+  /** @param {string} roleLower user|assistant|system @param {number|undefined} atMs @param {string|undefined} source */
+  function roleHeadHtml(roleLower, atMs, source) {
+    const label =
+      source === "telegram"
+        ? '<span class="msg__role-name">' +
+          esc(roleLower) +
+          '</span><span class="msg__channel-tag" title="Telegram thread">TG</span>'
+        : esc(roleLower);
     let timeHtml = "";
     if (typeof atMs === "number" && Number.isFinite(atMs)) {
       const d = new Date(atMs);
@@ -519,7 +525,9 @@
 
   /** Serialize rows for userData JSON (Electron `aa-chat-history.json`). */
   function rowsForPersist() {
-    return history.map((m) => {
+    return history
+      .filter((m) => m.source !== "telegram")
+      .map((m) => {
       /** @type {Record<string, unknown>} */
       const o = { role: m.role, content: m.content };
       if (typeof m.atMs === "number" && Number.isFinite(m.atMs)) o.atMs = m.atMs;
@@ -568,6 +576,36 @@
       }
       return o;
     });
+  }
+
+  /** Apply server-side transcript (includes Telegram mirror rows when Settings flag on). */
+  function applyRowsFromServer(rawRows) {
+    if (!Array.isArray(rawRows)) {
+      return;
+    }
+    history.length = 0;
+    for (const raw of rawRows) {
+      const row = normalizeHistoryRow(raw);
+      if (row) history.push(row);
+    }
+    render();
+    syncThinkPanelsToTier(getThinkTier());
+  }
+
+  async function pullHistoryFromMain() {
+    if (typeof aa.chatHistoryGet !== "function" || !historyHydrated) {
+      return;
+    }
+    if (agentBusy) {
+      mirrorRefreshQueued = true;
+      return;
+    }
+    try {
+      const res = await aa.chatHistoryGet();
+      if (res && res.ok === true && Array.isArray(res.rows)) {
+        applyRowsFromServer(res.rows);
+      }
+    } catch (_) {}
   }
 
   /** Serialize disk writes so rapid scheduler (or any) turns cannot reorder IPC — stale save must not overwrite newer history. */
@@ -620,6 +658,9 @@
       if (typeof u.system_fingerprint === "string") row.usageMeta.system_fingerprint = u.system_fingerprint;
     }
     if (o.errReply === true) row.errReply = true;
+    if (typeof o.telegramChatId === "number" && Number.isFinite(o.telegramChatId)) {
+      row.telegramChatId = Math.floor(o.telegramChatId);
+    }
     if (Array.isArray(o.displayAttachments)) {
       /** @type {RowAttachment[]} */
       const list = [];
@@ -686,13 +727,14 @@
     if (agentBusy) return false;
     if (!history.length) return false;
     const last = history[history.length - 1];
-    return last.role === "user";
+    return last.role === "user" && last.source !== "telegram";
   }
 
   /** @param {number} index */
   function deleteMessageAt(index) {
     if (agentBusy) return;
     if (!(typeof index === "number" && index >= 0 && index < history.length)) return;
+    if (history[index].source === "telegram") return;
     history.splice(index, 1);
     const last = history.length ? history[history.length - 1] : null;
     if (!last || last.role !== "user") {
@@ -724,7 +766,7 @@
       (m.source === "scheduler" ? " msg--scheduler-push" : "") +
       (m.source === "telegram" ? " msg--telegram" : "") +
       (r === "assistant" && m.errReply ? " error" : "");
-    const head = roleHeadHtml(r, m.atMs);
+    const head = roleHeadHtml(r, m.atMs, m.source);
     if (r === "assistant" && m.reasoning) {
       const tr = getThinkTier();
       const lbl = tr === 1 ? "thinking …" : "thinking";
@@ -752,7 +794,7 @@
         esc(m.content) +
         "</div></div>";
     } else if (r === "user" && m.displayAttachments && m.displayAttachments.length) {
-      div.insertAdjacentHTML("afterbegin", roleHeadHtml(r, m.atMs));
+      div.insertAdjacentHTML("afterbegin", roleHeadHtml(r, m.atMs, m.source));
       const bodyWrap = document.createElement("div");
       bodyWrap.className = "body body--with-attach";
       const strip = document.createElement("div");
@@ -822,7 +864,7 @@
         div.appendChild(row);
       }
     } else {
-      div.innerHTML = head + '<div class="body">' + esc(m.content) + "</div>";
+      div.innerHTML = roleHeadHtml(r, m.atMs, m.source) + '<div class="body">' + esc(m.content) + "</div>";
       if (
         r === "user" &&
         orphanUserNeedsRetry() &&
@@ -870,7 +912,7 @@
     if (r === "assistant" && m.usageMeta) {
       div.appendChild(usageFooterEl(m.usageMeta, m.agentToolCount));
     }
-    if (typeof index === "number") {
+    if (typeof index === "number" && m.source !== "telegram") {
       const del = document.createElement("button");
       del.type = "button";
       del.className = "msg-delete";
@@ -898,7 +940,7 @@
     const wrap = document.createElement("div");
     wrap.className = "msg role-assistant pending";
     wrap.innerHTML =
-      roleHeadHtml("assistant", pendingAt) +
+      roleHeadHtml("assistant", pendingAt, undefined) +
       '<div class="msg-stream">' +
       '<aside class="msg-stream__think think-tier--' +
       tr +
@@ -1101,6 +1143,7 @@
   async function executeAgentChatTurn() {
     if (agentBusy) return;
     if (!history.length || history[history.length - 1].role !== "user") return;
+    if (history[history.length - 1].source === "telegram") return;
 
     agentBusy = true;
     elSend.disabled = true;
@@ -1110,7 +1153,9 @@
     elMsgs.appendChild(pend.el);
     scrollMsgsToBottom();
 
-    const payloads = history.map((h) => {
+    const payloads = history
+      .filter((h) => h.source !== "telegram")
+      .map((h) => {
       /** @type {Record<string, unknown>} */
       const o = {
         role: h.role === "assistant" ? "assistant" : h.role === "system" ? "system" : "user",
@@ -1233,6 +1278,10 @@
       agentBusy = false;
       elSend.disabled = false;
       render();
+      if (mirrorRefreshQueued) {
+        mirrorRefreshQueued = false;
+        void pullHistoryFromMain();
+      }
       elInput.focus();
     }
   }
@@ -1319,6 +1368,12 @@
         return;
       }
       applySchedulerFinished(ply);
+    });
+  }
+
+  if (typeof aa.onChatMirrorRefresh === "function") {
+    aa.onChatMirrorRefresh(() => {
+      void pullHistoryFromMain();
     });
   }
 

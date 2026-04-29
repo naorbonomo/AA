@@ -8,6 +8,9 @@ import { appendSchedulerJobToDisk } from "./scheduler-job-chat-persist.js";
 import type { ChatMessage, ChatUsageSnapshot } from "./llm.js";
 import type { ScheduledJob } from "./scheduler-store.js";
 import { isJobDue, listScheduledJobs, recordJobRun } from "./scheduler-store.js";
+import { getResolvedSettings } from "./settings-store.js";
+import { appendTelegramMessages } from "./telegram-history-store.js";
+import { telegramSendPlainMessage, broadcastChatMirrorRefresh } from "./telegram-channel.js";
 import { getLogger } from "../utils/logger.js";
 
 const log = getLogger("scheduler-engine");
@@ -61,11 +64,44 @@ function showOsNotification(title: string, body: string): void {
   }
 }
 
+function resolveSchedulerTelegramChatId(job: ScheduledJob): number | null {
+  if (typeof job.telegramChatId === "number" && Number.isFinite(job.telegramChatId)) {
+    const c = Math.floor(job.telegramChatId);
+    if (Number.isInteger(c)) {
+      return c;
+    }
+  }
+  const d = getResolvedSettings().telegram.schedulerDefaultChatId;
+  return d;
+}
+
+async function pushSchedulerResultToTelegram(job: ScheduledJob, ok: boolean, text: string, error?: string): Promise<void> {
+  const chatId = resolveSchedulerTelegramChatId(job);
+  if (chatId === null) {
+    log.warn("scheduler telegram skip: no chat id", { id: job.id });
+    return;
+  }
+  const body = ok && text.trim().length ? text : (error ?? "error");
+  const content = `[Scheduled: ${job.title}]\n\n${body}`;
+  try {
+    await telegramSendPlainMessage(chatId, content);
+    appendTelegramMessages(chatId, [{ role: "assistant", content }]);
+    broadcastChatMirrorRefresh();
+  } catch (e) {
+    log.warn("scheduler telegram send failed", {
+      id: job.id,
+      err: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
 async function executeJob(job: ScheduledJob): Promise<void> {
   const id = job.id;
   if (running.has(id)) return;
   running.add(id);
   const history: ChatMessage[] = [{ role: "user", content: job.prompt }];
+  const deliverDesktop = job.deliverDesktop !== false;
+  const deliverTelegram = job.deliverTelegram === true;
   try {
     const out = await runChatWithWebSearchFromSettings(history);
     const rec = recordJobRun(id, { ok: true });
@@ -81,18 +117,23 @@ async function executeJob(job: ScheduledJob): Promise<void> {
       steps: out.steps,
       usage: out.usage ?? null,
     };
-    try {
-      appendSchedulerJobToDisk({
-        title: job.title,
-        ok: true,
-        text: out.text,
-        steps: out.steps,
-        usage: out.usage ?? null,
-      });
-    } catch (e) {
-      log.warn("scheduler chat persist failed", { err: e instanceof Error ? e.message : String(e) });
+    if (deliverDesktop) {
+      try {
+        appendSchedulerJobToDisk({
+          title: job.title,
+          ok: true,
+          text: out.text,
+          steps: out.steps,
+          usage: out.usage ?? null,
+        });
+      } catch (e) {
+        log.warn("scheduler chat persist failed", { err: e instanceof Error ? e.message : String(e) });
+      }
+      broadcast("scheduler:job-finished", payload);
     }
-    broadcast("scheduler:job-finished", payload);
+    if (deliverTelegram) {
+      void pushSchedulerResultToTelegram(job, true, out.text ?? "");
+    }
     if (job.notify) {
       showOsNotification(job.title, out.text.replace(/\s+/g, " ").slice(0, 480));
     }
@@ -110,16 +151,21 @@ async function executeJob(job: ScheduledJob): Promise<void> {
       ok: false,
       error: msg,
     };
-    try {
-      appendSchedulerJobToDisk({
-        title: job.title,
-        ok: false,
-        error: msg,
-      });
-    } catch (e) {
-      log.warn("scheduler chat persist failed", { err: e instanceof Error ? e.message : String(e) });
+    if (deliverDesktop) {
+      try {
+        appendSchedulerJobToDisk({
+          title: job.title,
+          ok: false,
+          error: msg,
+        });
+      } catch (e2) {
+        log.warn("scheduler chat persist failed", { err: e2 instanceof Error ? e2.message : String(e2) });
+      }
+      broadcast("scheduler:job-finished", payload);
     }
-    broadcast("scheduler:job-finished", payload);
+    if (deliverTelegram) {
+      void pushSchedulerResultToTelegram(job, false, "", msg);
+    }
     if (job.notify) {
       showOsNotification(job.title, `Failed: ${msg.slice(0, 400)}`);
     }

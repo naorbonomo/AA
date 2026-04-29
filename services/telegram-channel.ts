@@ -1,5 +1,6 @@
 /** Telegram ingress: long-poll + optional webhook; agent replies via `runChatWithWebSearchTool`. */
 
+import { BrowserWindow } from "electron";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -13,7 +14,7 @@ import {
   TELEGRAM_MAX_MESSAGE_CHARS,
 } from "../config/telegram_config.js";
 import { getLogger } from "../utils/logger.js";
-import { getResolvedSettings } from "./settings-store.js";
+import { getResolvedSettings, rememberTelegramSchedulerDefaultChatIfUnset } from "./settings-store.js";
 import { getSecrets } from "./secrets-store.js";
 import { runChatWithWebSearchTool, type AgentStepPayload } from "./agent-runner.js";
 import { appendTelegramMessages, readTelegramChatMessages } from "./telegram-history-store.js";
@@ -29,6 +30,18 @@ import {
 import { transcribePcm } from "./whisper-transformers.js";
 
 const log = getLogger("telegram-channel");
+
+/** Tell Chat renderer to re-fetch merged history (Telegram mirror). */
+export function broadcastChatMirrorRefresh(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    try {
+      win.webContents.send("chat:mirror-refresh");
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 let telegramUserDataDir: string | null = null;
 let telegramAppIconPngPath: string | null = null;
@@ -212,6 +225,15 @@ async function apiSendMessage(
   }
 }
 
+/** Scheduler / internal: send plain text chunking via Bot API. */
+export async function telegramSendPlainMessage(chatId: number, text: string): Promise<void> {
+  const token = telegramToken();
+  if (!token) {
+    throw new Error("Telegram bot token not configured");
+  }
+  await apiSendMessage(token, chatId, text);
+}
+
 function wavBufferFromDataUrl(dataUrl: string): Buffer | null {
   const m = /^data:audio\/wav;base64,([^,]+)/i.exec(dataUrl.trim());
   if (!m?.[1]) {
@@ -301,6 +323,7 @@ async function runAgentAndReply(
 ): Promise<void> {
   const settings = getResolvedSettings();
   appendTelegramMessages(chatId, [{ role: "user", content: userText }]);
+  broadcastChatMirrorRefresh();
   const historyWithUser = readTelegramChatMessages(chatId);
 
   let out: string;
@@ -309,6 +332,7 @@ async function runAgentAndReply(
     const r = await runChatWithWebSearchTool({
       history: historyWithUser,
       maxToolRounds: settings.agent.maxToolRounds,
+      scheduleJobContext: { telegramChatId: chatId },
       onStreamDelta: undefined,
       onStep: (p: AgentStepPayload) => {
         if (p.kind === "tts" && p.status === "done" && p.ok && p.dataUrl) {
@@ -324,6 +348,7 @@ async function runAgentAndReply(
   }
 
   appendTelegramMessages(chatId, [{ role: "assistant", content: out }]);
+  broadcastChatMirrorRefresh();
   await apiSendMessage(token, chatId, out, replyToMessageId);
   for (let i = 0; i < ttsDataUrls.length; i += 1) {
     const raw = ttsDataUrls[i];
@@ -467,6 +492,8 @@ export async function handleTelegramUpdate(update: Record<string, unknown>): Pro
     log.warn("TELEGRAM_BOT_TOKEN missing; skip update");
     return;
   }
+
+  rememberTelegramSchedulerDefaultChatIfUnset(chatId);
 
   const voice = message.voice ?? message.audio;
   if (voice && typeof voice === "object" && (voice as { file_id?: string }).file_id) {

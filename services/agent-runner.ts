@@ -4,7 +4,7 @@ import { resolveAgentSystemContent } from "../config/system_prompts.js";
 import type { ResolvedAgent } from "../config/user-settings.js";
 import type { ChatMessage, ChatUsageSnapshot, CompletionApiMessage, StreamDelta } from "./llm.js";
 import { normalizeAssistantContent, streamCompletionPost, completionUserMessage } from "./llm.js";
-import { executeScheduleJobTool, scheduleJobOpenAiTool } from "./schedule-job-tool.js";
+import { executeScheduleJobTool, scheduleJobOpenAiTool, type ScheduleJobToolContext } from "./schedule-job-tool.js";
 import { webSearch, webSearchOpenAiTool, shrinkWebSearchForToolMessage } from "./web-search.js";
 import { executeTtsTool, ttsOpenAiTool } from "./tts-tool.js";
 import {
@@ -100,6 +100,8 @@ export async function runChatWithWebSearchTool(opts: {
   onStep?: (p: AgentStepPayload) => void;
   /** Token/reasoning deltas for current assistant round (each completion is streamed). */
   onStreamDelta?: (d: StreamDelta) => void;
+  /** Passed into `schedule_job` tool (e.g. Telegram `chat_id` for deliver_telegram default). */
+  scheduleJobContext?: ScheduleJobToolContext;
 }): Promise<{
   text: string;
   steps: AgentStepPayload[];
@@ -235,7 +237,7 @@ export async function runChatWithWebSearchTool(opts: {
       }
 
       if (name === "schedule_job") {
-        const result = executeScheduleJobTool(rawArgs);
+        const result = executeScheduleJobTool(rawArgs, opts.scheduleJobContext);
         const ok = result.ok === true;
         let schedAction = "?";
         try {
@@ -364,6 +366,7 @@ export async function runChatWithWebSearchFromSettings(
   onStep?: (p: AgentStepPayload) => void,
   onStreamDelta?: (d: StreamDelta) => void,
   stagedAudioByFileName?: Map<string, StagedAudioClip>,
+  scheduleJobContext?: ScheduleJobToolContext,
 ): Promise<{ text: string; steps: AgentStepPayload[]; usage?: ChatUsageSnapshot }> {
   const s = getResolvedSettings();
   return runChatWithWebSearchTool({
@@ -373,5 +376,6 @@ export async function runChatWithWebSearchFromSettings(
     stagedAudioByFileName,
     onStep,
     onStreamDelta,
+    scheduleJobContext,
   });
 }

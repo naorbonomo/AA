@@ -171,6 +171,34 @@
         <summary class="settings-card__summary">
           <span class="settings-card__chev" aria-hidden="true">▸</span>
           <span class="settings-card__summary-text">
+            <span class="settings-card__title">Chat &amp; Telegram UI</span>
+            <span class="settings-card__file">user-settings → chat / telegram</span>
+          </span>
+        </summary>
+        <div class="settings-card__body">
+          <div class="field field--row">
+            <label class="check">
+              <input type="checkbox" id="set-chat-tg-mirror" />
+              Show Telegram transcript in Chat (read-only, magenta tint; sorted with desktop by time)
+            </label>
+          </div>
+          <p class="settings-card__meta">
+            Desktop <code>aa-chat-history.json</code> unchanged. Mirror pulls from <code>aa-telegram-chats/*.json</code>.
+          </p>
+          <label class="field">
+            <span>Default Telegram <code>chat_id</code> for scheduled jobs (optional)</span>
+            <input type="text" id="set-tg-scheduler-chat-id" inputmode="numeric" spellcheck="false" autocomplete="off" placeholder="e.g. 123456789" />
+          </label>
+          <p class="settings-card__meta" id="hint-tg-scheduler-chat">
+            When a job uses “deliver to Telegram” without per-job id, this value is used. Get id from Telegram (e.g. <code>@userinfobot</code>) or from job logs.
+          </p>
+        </div>
+      </details>
+
+      <details class="settings-card">
+        <summary class="settings-card__summary">
+          <span class="settings-card__chev" aria-hidden="true">▸</span>
+          <span class="settings-card__summary-text">
             <span class="settings-card__title">App time</span>
             <span class="settings-card__file">utils/app-time.ts</span>
           </span>

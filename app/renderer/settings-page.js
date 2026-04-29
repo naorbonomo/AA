@@ -46,6 +46,11 @@
   const elAppTzCustomRow = document.getElementById("app-tz-custom-row");
   const elAppTzCustom = document.getElementById("app-tz-custom");
   const elAppRegionLabel = document.getElementById("app-region-label");
+  const elChatTgMirror = document.getElementById("set-chat-tg-mirror");
+  const elTgSchedChatId = document.getElementById("set-tg-scheduler-chat-id");
+
+  /** @type {Record<string, unknown>} */
+  let lastUserSnap = {};
 
   /** @type {Array<{ id: string, label: string, defaultBaseUrl: string, models: string[], defaultModel: string }>} */
   let cachedLlmProviders = [];
@@ -330,6 +335,19 @@
       elAgentSystem.value = typeof r.agent.systemPrompt === "string" ? r.agent.systemPrompt : "";
     }
 
+    lastUserSnap =
+      snap.user && typeof snap.user === "object" ? /** @type {Record<string, unknown>} */ (snap.user) : {};
+
+    if (elChatTgMirror instanceof HTMLInputElement) {
+      elChatTgMirror.checked = !!r.chat?.showTelegramMirror;
+    }
+    if (elTgSchedChatId instanceof HTMLInputElement) {
+      const rtg = r.telegram && typeof r.telegram === "object" ? r.telegram : {};
+      const d = /** @type {{ schedulerDefaultChatId?: number }} */ (rtg).schedulerDefaultChatId;
+      elTgSchedChatId.value =
+        typeof d === "number" && Number.isFinite(d) ? String(Math.floor(d)) : "";
+    }
+
     const sizes = new Set(["tiny", "small", "base", "medium"]);
     const ws = typeof r.whisper?.modelSize === "string" && sizes.has(r.whisper.modelSize) ? r.whisper.modelSize : "base";
     if (elWhisperSize instanceof HTMLSelectElement) {
@@ -461,6 +479,28 @@
         modelSize: elWhisperSize instanceof HTMLSelectElement ? elWhisperSize.value : "base",
         quantized: elWhisperQuant instanceof HTMLInputElement ? elWhisperQuant.checked : true,
         multilingual: elWhisperMulti instanceof HTMLInputElement ? elWhisperMulti.checked : true,
+      },
+      telegram: (function () {
+        const prev =
+          lastUserSnap.telegram && typeof lastUserSnap.telegram === "object"
+            ? { .../** @type {Record<string, unknown>} */ (lastUserSnap.telegram) }
+            : {};
+        const raw = elTgSchedChatId instanceof HTMLInputElement ? elTgSchedChatId.value.trim() : "";
+        if (raw === "") {
+          prev.schedulerDefaultChatId = null;
+        } else {
+          const n = parseInt(raw, 10);
+          if (Number.isFinite(n)) {
+            prev.schedulerDefaultChatId = n;
+          }
+        }
+        return /** @type {Record<string, unknown>} */ (prev);
+      })(),
+      chat: {
+        ...(lastUserSnap.chat && typeof lastUserSnap.chat === "object"
+          ? { .../** @type {Record<string, unknown>} */ (lastUserSnap.chat) }
+          : {}),
+        showTelegramMirror: elChatTgMirror instanceof HTMLInputElement ? elChatTgMirror.checked : false,
       },
     });
 

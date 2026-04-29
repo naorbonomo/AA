@@ -61,6 +61,8 @@ export type ChatHistoryRow = {
   agentTtsClips?: ChatHistoryTtsClip[];
   /** Where the row originated: main Chat UI, Telegram bridge, or scheduled job. */
   source?: "app" | "telegram" | "scheduler";
+  /** Telegram thread id — only set for merged mirror rows from `aa-telegram-chats` (not persisted in app history). */
+  telegramChatId?: number;
 };
 
 const MAX_ROWS = 500;
@@ -134,6 +136,9 @@ function normalizeRow(raw: unknown): ChatHistoryRow | null {
   const src = o.source;
   if (src === "app" || src === "telegram" || src === "scheduler") {
     row.source = src;
+  }
+  if (o.telegramChatId !== undefined && typeof o.telegramChatId === "number" && Number.isFinite(o.telegramChatId)) {
+    row.telegramChatId = Math.floor(o.telegramChatId);
   }
   if (Array.isArray(o.displayAttachments)) {
     const list: ChatHistoryAttachment[] = [];

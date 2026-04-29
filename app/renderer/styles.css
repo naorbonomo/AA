@@ -19,6 +19,10 @@
   --scheduler-push: #fbbf24;
   --scheduler-push-border: rgba(251, 191, 36, 0.45);
   --scheduler-push-bg: rgba(251, 191, 36, 0.08);
+  /* Telegram mirror rows merged into desktop Chat (read-only) */
+  --telegram-mirror: #e879f9;
+  --telegram-mirror-border: rgba(232, 121, 249, 0.55);
+  --telegram-mirror-bg: rgba(232, 121, 249, 0.09);
   --hairline: max(1px, 0.06vmin);
   --fs-root: clamp(50%, 2.35vmin, 110%);
   /* Compact chrome: tabs, inputs, buttons, chips — cards use --radius-card */
@@ -1051,7 +1055,27 @@ body {
 }
 
 .msg.msg--telegram {
-  border-left: 2px solid rgba(56, 189, 248, 0.45);
+  border-left: var(--hairline) solid var(--telegram-mirror-border);
+  background: linear-gradient(90deg, var(--telegram-mirror-bg), transparent 55%);
+  box-shadow: inset 0 0 0 max(1px, 0.06vmin) rgba(232, 121, 249, 0.12);
+}
+
+.msg.msg--telegram .role-h__label {
+  color: var(--telegram-mirror);
+}
+
+.msg__channel-tag {
+  display: inline-block;
+  margin-left: 0.55ch;
+  padding: 0.08em 0.4em;
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  border-radius: 0.28em;
+  color: var(--telegram-mirror);
+  border: var(--hairline) solid var(--telegram-mirror-border);
+  background: var(--telegram-mirror-bg);
 }
 
 .msg.pending {

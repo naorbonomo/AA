@@ -30,5 +30,16 @@
 
 ## History `source`
 
-- **`aa-telegram-chats/<chat_id>.json`** — each row includes `"source": "telegram"` with `role` / `content`.
+- **`aa-telegram-chats/<chat_id>.json`** — each row includes `"source": "telegram"` with `role` / `content` / optional `"atMs"` (wall time for merge order).
 - **`aa-chat-history.json`** — new saves set `"source": "app"` for Chat turns and `"source": "scheduler"` for scheduled runs; older rows may omit `source` (treat as app).
+
+## Desktop Chat mirror
+
+- Settings → **Chat & Telegram UI** → enable **Show Telegram transcript in Chat** to merge all `aa-telegram-chats/*.json` into Chat UI (magenta styling, read-only). Does not write Telegram rows into `aa-chat-history.json`.
+- **Order:** transcript sorts by **Q→A turns** (user + following assistant per channel), not raw timestamp per row — desktop and Telegram pairs stay adjacent. Same-time turns: **desktop before Telegram**.
+- Main process emits **`chat:mirror-refresh`** after each Telegram user/assistant persist (and scheduler Telegram push); Chat tab re-fetches history so mirror stays live without changing pages.
+
+## Scheduler → Telegram
+
+- Jobs have **`deliverDesktop`** (default on) and **`deliverTelegram`** (default off), plus optional **`telegramChatId`**. Engine uses Settings **default Telegram chat id** when `deliverTelegram` is on but job has no id. `schedule_job` tool accepts `deliver_desktop`, `deliver_telegram`, `telegram_chat_id` on create/update.
+- **Default chat id** lives in **`aa-user-settings.json`** → `telegram.schedulerDefaultChatId`. If unset, **first inbound Telegram update** (e.g. `/start` or any message) saves that chat’s `chat_id` automatically. Clearing the field in Settings or setting another id stops overwrite until you clear it again.

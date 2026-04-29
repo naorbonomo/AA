@@ -109,6 +109,20 @@ contextBridge.exposeInMainWorld("aaDesktop", {
     ipcRenderer.on("scheduler:job-finished", wrapped);
     return () => ipcRenderer.removeListener("scheduler:job-finished", wrapped);
   },
+  /** Desktop Chat: Telegram history changed — re-invoke `chatHistoryGet` when mirror enabled. */
+  onChatMirrorRefresh(handler) {
+    const wrapped = () => {
+      if (typeof handler === "function") {
+        try {
+          handler();
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    };
+    ipcRenderer.on("chat:mirror-refresh", wrapped);
+    return () => ipcRenderer.removeListener("chat:mirror-refresh", wrapped);
+  },
   /** `{ pcm: ArrayBuffer, sampleRate, language?, task? }` → `{ ok, text? } | { ok: false, error }`. Uses Whisper settings from disk. */
   whisperTranscribe(payload) {
     return ipcRenderer.invoke("whisper:transcribe", payload);

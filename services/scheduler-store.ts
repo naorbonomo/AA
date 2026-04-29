@@ -38,6 +38,12 @@ export type ScheduledJob = {
   enabled: boolean;
   /** When true, show OS notification (macOS/Windows) after each run. */
   notify: boolean;
+  /** When true (default), append assistant bubble to desktop chat + IPC broadcast. */
+  deliverDesktop: boolean;
+  /** When true, send assistant text to Telegram (needs `telegramChatId` or settings default). */
+  deliverTelegram: boolean;
+  /** Target chat for `deliverTelegram`; optional if `telegram.schedulerDefaultChatId` is set. */
+  telegramChatId?: number;
   schedule: ScheduleSpec;
   createdAt: string;
   updatedAt: string;
@@ -100,10 +106,18 @@ function normalizeJob(raw: unknown): ScheduledJob | null {
     prompt,
     enabled: o.enabled === false ? false : true,
     notify: o.notify === false ? false : true,
+    deliverDesktop: o.deliverDesktop === false ? false : true,
+    deliverTelegram: o.deliverTelegram === true,
     schedule,
     createdAt,
     updatedAt,
   };
+  if (typeof o.telegramChatId === "number" && Number.isFinite(o.telegramChatId)) {
+    const c = Math.floor(o.telegramChatId);
+    if (Number.isInteger(c)) {
+      job.telegramChatId = c;
+    }
+  }
   if (typeof o.lastRunAt === "string" && o.lastRunAt.length) job.lastRunAt = o.lastRunAt;
   if (typeof o.lastError === "string" && o.lastError.length) job.lastError = o.lastError.slice(0, 4000);
   return job;
@@ -176,6 +190,9 @@ export type CreateScheduledJobInput = {
   prompt: string;
   enabled?: boolean;
   notify?: boolean;
+  deliverDesktop?: boolean;
+  deliverTelegram?: boolean;
+  telegramChatId?: number;
   schedule: ScheduleSpec;
 };
 
@@ -200,18 +217,36 @@ export function createScheduledJob(input: CreateScheduledJobInput): { ok: true; 
     prompt,
     enabled: input.enabled === false ? false : true,
     notify: input.notify === false ? false : true,
+    deliverDesktop: input.deliverDesktop === false ? false : true,
+    deliverTelegram: input.deliverTelegram === true,
     schedule,
     createdAt: t,
     updatedAt: t,
   };
+  if (typeof input.telegramChatId === "number" && Number.isFinite(input.telegramChatId)) {
+    const c = Math.floor(input.telegramChatId);
+    if (Number.isInteger(c)) {
+      job.telegramChatId = c;
+    }
+  }
   jobs.push(job);
   writeRawJobs(jobs);
   return { ok: true, job };
 }
 
 export type UpdateScheduledJobPatch = Partial<
-  Pick<ScheduledJob, "title" | "prompt" | "enabled" | "notify" | "schedule" | "lastError">
->;
+  Pick<
+    ScheduledJob,
+    | "title"
+    | "prompt"
+    | "enabled"
+    | "notify"
+    | "deliverDesktop"
+    | "deliverTelegram"
+    | "schedule"
+    | "lastError"
+  >
+> & { telegramChatId?: number | null };
 
 export function updateScheduledJob(
   id: string,
@@ -248,6 +283,22 @@ export function updateScheduledJob(
   }
   if (patch.notify !== undefined) {
     next.notify = !!patch.notify;
+  }
+  if (patch.deliverDesktop !== undefined) {
+    next.deliverDesktop = !!patch.deliverDesktop;
+  }
+  if (patch.deliverTelegram !== undefined) {
+    next.deliverTelegram = !!patch.deliverTelegram;
+  }
+  if (patch.telegramChatId !== undefined) {
+    if (patch.telegramChatId === null) {
+      delete next.telegramChatId;
+    } else if (typeof patch.telegramChatId === "number" && Number.isFinite(patch.telegramChatId)) {
+      const c = Math.floor(patch.telegramChatId);
+      if (Number.isInteger(c)) {
+        next.telegramChatId = c;
+      }
+    }
   }
   if (patch.schedule !== undefined) {
     const s = normalizeSchedule(patch.schedule);

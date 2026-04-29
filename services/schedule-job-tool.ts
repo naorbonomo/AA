@@ -8,6 +8,7 @@ import {
   type ScheduleSpec,
   type UpdateScheduledJobPatch,
 } from "./scheduler-store.js";
+import { getResolvedSettings } from "./settings-store.js";
 
 export const scheduleJobOpenAiTool = {
   type: "function" as const,
@@ -48,14 +49,37 @@ export const scheduleJobOpenAiTool = {
           type: "boolean",
           description: "Desktop notification after each run (create default true; update optional).",
         },
+        deliver_desktop: {
+          type: "boolean",
+          description:
+            "When true (default), scheduler run appends to desktop chat + IPC. Set false for Telegram-only delivery.",
+        },
+        deliver_telegram: {
+          type: "boolean",
+          description:
+            "When true, scheduler run also sends result text to Telegram. Needs telegram_chat_id or Settings → default chat id.",
+        },
+        telegram_chat_id: {
+          type: "integer",
+          description:
+            "Numeric Telegram chat_id for deliver_telegram. When creating from Telegram, omitted id uses current chat.",
+        },
       },
       required: ["action"],
     },
   },
 };
 
+/** Optional context when agent runs inside Telegram — fills default telegram_chat_id for schedule_job. */
+export type ScheduleJobToolContext = {
+  telegramChatId?: number;
+};
+
 /** Runs tool; returns JSON-serializable object for the assistant message. */
-export function executeScheduleJobTool(rawArgs: string): Record<string, unknown> {
+export function executeScheduleJobTool(
+  rawArgs: string,
+  ctx?: ScheduleJobToolContext,
+): Record<string, unknown> {
   let o: Record<string, unknown>;
   try {
     o = JSON.parse(rawArgs) as Record<string, unknown>;
@@ -74,6 +98,9 @@ export function executeScheduleJobTool(rawArgs: string): Record<string, unknown>
       title: j.title,
       enabled: j.enabled,
       notify: j.notify,
+      deliverDesktop: j.deliverDesktop,
+      deliverTelegram: j.deliverTelegram,
+      telegramChatId: j.telegramChatId,
       schedule: j.schedule,
       nextRunAtMs: j.nextRunAtMs,
       lastRunAt: j.lastRunAt,
@@ -109,6 +136,22 @@ export function executeScheduleJobTool(rawArgs: string): Record<string, unknown>
     if (typeof o.notify_desktop === "boolean") {
       patch.notify = o.notify_desktop;
     }
+    if (typeof o.deliver_desktop === "boolean") {
+      patch.deliverDesktop = o.deliver_desktop;
+    }
+    if (typeof o.deliver_telegram === "boolean") {
+      patch.deliverTelegram = o.deliver_telegram;
+    }
+    if (o.telegram_chat_id !== undefined) {
+      if (o.telegram_chat_id === null) {
+        patch.telegramChatId = null;
+      } else {
+        const tc = Number(o.telegram_chat_id);
+        if (Number.isFinite(tc)) {
+          patch.telegramChatId = Math.floor(tc);
+        }
+      }
+    }
     const everyU = o.every_minutes !== undefined ? Number(o.every_minutes) : NaN;
     const onceU = typeof o.one_shot_utc_iso === "string" ? o.one_shot_utc_iso.trim() : "";
     if (Number.isFinite(everyU) && everyU >= 1 && everyU <= 10_080) {
@@ -124,7 +167,7 @@ export function executeScheduleJobTool(rawArgs: string): Record<string, unknown>
       return {
         ok: false,
         error:
-          "update needs at least one of: title, prompt, enabled, notify_desktop, every_minutes, one_shot_utc_iso",
+          "update needs at least one of: title, prompt, enabled, notify_desktop, deliver_desktop, deliver_telegram, telegram_chat_id, every_minutes, one_shot_utc_iso",
       };
     }
     const r = updateScheduledJob(id, patch);
@@ -139,6 +182,34 @@ export function executeScheduleJobTool(rawArgs: string): Record<string, unknown>
   }
   const titleRaw = typeof o.title === "string" ? o.title.trim() : "";
   const notify = o.notify_desktop === false ? false : true;
+  const deliverDesktop = o.deliver_desktop === false ? false : true;
+  const deliverTelegram = o.deliver_telegram === true;
+  let telegramChatId: number | undefined;
+  if (o.telegram_chat_id !== undefined && o.telegram_chat_id !== null) {
+    const tc = Number(o.telegram_chat_id);
+    if (Number.isFinite(tc)) {
+      telegramChatId = Math.floor(tc);
+    }
+  }
+  if (deliverTelegram && telegramChatId === undefined && typeof ctx?.telegramChatId === "number") {
+    const d = Math.floor(ctx.telegramChatId);
+    if (Number.isInteger(d)) {
+      telegramChatId = d;
+    }
+  }
+  if (deliverTelegram && telegramChatId === undefined) {
+    const fromSettings = getResolvedSettings().telegram.schedulerDefaultChatId;
+    if (fromSettings != null) {
+      telegramChatId = fromSettings;
+    }
+  }
+  if (deliverTelegram && telegramChatId === undefined) {
+    return {
+      ok: false,
+      error:
+        "deliver_telegram needs telegram_chat_id, or run from Telegram, or set default in Settings → Chat / Telegram",
+    };
+  }
   const every = o.every_minutes !== undefined ? Number(o.every_minutes) : NaN;
   const onceIso = typeof o.one_shot_utc_iso === "string" ? o.one_shot_utc_iso.trim() : "";
   let schedule: ScheduleSpec | null = null;
@@ -157,6 +228,9 @@ export function executeScheduleJobTool(rawArgs: string): Record<string, unknown>
     title: titleRaw || "Scheduled task",
     prompt,
     notify,
+    deliverDesktop,
+    deliverTelegram,
+    ...(telegramChatId !== undefined ? { telegramChatId } : {}),
     schedule,
   });
   if (!created.ok) {
