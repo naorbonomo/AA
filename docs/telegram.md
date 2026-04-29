@@ -27,6 +27,7 @@
 - Webhook: only if you set `"telegram": { "webhookPort": 8787 }` in `aa-user-settings.json` *and* point `setWebhook` at a public URL (tunnel).
 - **Voice:** same Whisper as desktop. **`ffmpeg`** on PATH decodes Telegram voice files (`.oga` / Opus). Install from [ffmpeg.org](https://ffmpeg.org/), restart AA, retry.
 - **Agent/tools:** same main-process loop as Chat (`web_search`, `schedule_job`, `stt`, `tts`, …).
+- **Per-chat queue:** one user message is processed at a time per `chat_id`. A hung LLM/stream used to block all later user messages while **scheduler** could still post to Telegram. **Timeout:** `config/telegram_config.ts` → `TELEGRAM_AGENT_REPLY_TIMEOUT_MS` (default 10 min) ends stuck runs with an error reply so queue advances.
 
 ## History `source`
 

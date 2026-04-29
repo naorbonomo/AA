@@ -7,6 +7,7 @@ import path from "node:path";
 
 import {
   TELEGRAM_API_BASE,
+  TELEGRAM_AGENT_REPLY_TIMEOUT_MS,
   TELEGRAM_DEDUPE_MAX_IDS,
   TELEGRAM_GETUPDATES_ERROR_RETRY_MS,
   TELEGRAM_GETUPDATES_HTTP_TIMEOUT_MS,
@@ -299,7 +300,25 @@ async function apiSendTtsWavAsVoiceOrDocument(
 
 const chainByChat = new Map<number, Promise<void>>();
 
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  const timeoutP = new Promise<never>((_, reject) => {
+    t = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+  });
+  return Promise.race([
+    p.finally(() => {
+      if (t !== undefined) {
+        clearTimeout(t);
+      }
+    }),
+    timeoutP,
+  ]);
+}
+
 function enqueueChatWork(chatId: number, fn: () => Promise<void>): void {
+  if (chainByChat.has(chatId)) {
+    log.warn("telegram chat queue backlog", { chatId });
+  }
   const prev = chainByChat.get(chatId) ?? Promise.resolve();
   const next = prev
     .then(fn)
@@ -329,23 +348,29 @@ async function runAgentAndReply(
   let out: string;
   const ttsDataUrls: string[] = [];
   try {
-    const r = await runChatWithWebSearchTool({
-      history: historyWithUser,
-      maxToolRounds: settings.agent.maxToolRounds,
-      scheduleJobContext: { telegramChatId: chatId },
-      onStreamDelta: undefined,
-      onStep: (p: AgentStepPayload) => {
-        if (p.kind === "tts" && p.status === "done" && p.ok && p.dataUrl) {
-          ttsDataUrls.push(p.dataUrl);
-        }
-      },
-    });
+    log.info("telegram agent start", { chatId, timeoutSec: Math.round(TELEGRAM_AGENT_REPLY_TIMEOUT_MS / 1000) });
+    const r = await withTimeout(
+      runChatWithWebSearchTool({
+        history: historyWithUser,
+        maxToolRounds: settings.agent.maxToolRounds,
+        scheduleJobContext: { telegramChatId: chatId },
+        onStreamDelta: undefined,
+        onStep: (p: AgentStepPayload) => {
+          if (p.kind === "tts" && p.status === "done" && p.ok && p.dataUrl) {
+            ttsDataUrls.push(p.dataUrl);
+          }
+        },
+      }),
+      TELEGRAM_AGENT_REPLY_TIMEOUT_MS,
+      "Telegram agent",
+    );
     out = r.text?.trim() ? r.text.trim() : "(empty reply)";
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     out = `Error: ${msg}`;
     log.error("agent telegram", { chatId, msg });
   }
+  log.info("telegram agent done", { chatId, outLen: out.length });
 
   appendTelegramMessages(chatId, [{ role: "assistant", content: out }]);
   broadcastChatMirrorRefresh();
@@ -753,6 +778,10 @@ export function startTelegramIntegration(): TelegramIntegrationHandles {
   }
 
   const { telegram } = getResolvedSettings();
+
+  if (!telegram.usePolling && telegram.webhookPort <= 0) {
+    log.warn("telegram inbound off (usePolling false, webhookPort 0); outbound sends still work");
+  }
 
   if (telegram.webhookPort > 0) {
     handles.server = startTelegramWebhookServer(token, telegram.webhookPort);

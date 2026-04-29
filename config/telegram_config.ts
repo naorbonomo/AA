@@ -17,3 +17,9 @@ export const TELEGRAM_MAX_MESSAGE_CHARS = 3900;
 export const TELEGRAM_GETUPDATES_TIMEOUT_SEC = 30;
 export const TELEGRAM_GETUPDATES_HTTP_TIMEOUT_MS = 35_000;
 export const TELEGRAM_GETUPDATES_ERROR_RETRY_MS = 5000;
+
+/**
+ * Cap one inbound user message → agent → `sendMessage` chain. If LLM/tool loop hangs, queue for
+ * this `chat_id` used to block forever while scheduler still used `sendMessage` (one-way alerts).
+ */
+export const TELEGRAM_AGENT_REPLY_TIMEOUT_MS = 600_000;
