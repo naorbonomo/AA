@@ -8,6 +8,7 @@
     "build": "rimraf dist && tsc -p tsconfig.json",
     "start": "electron .",
     "cli": "tsx cli.ts",
+    "cli:dist": "node dist/cli.js",
     "smoke:tavily": "tsx tests/tavily-web-search.smoke.ts",
     "electron:packed": "npm run build && electron .",
     "dev": "npm run build && concurrently -k \"tsc -w -p tsconfig.json\" \"wait-on dist/app/electron/main.js && electron .\""
