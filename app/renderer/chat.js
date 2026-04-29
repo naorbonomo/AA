@@ -688,6 +688,18 @@
     return last.role === "user";
   }
 
+  /** @param {number} index */
+  function deleteMessageAt(index) {
+    if (agentBusy) return;
+    if (!(typeof index === "number" && index >= 0 && index < history.length)) return;
+    history.splice(index, 1);
+    const last = history.length ? history[history.length - 1] : null;
+    if (!last || last.role !== "user") {
+      lastTurnStagedAudio = null;
+    }
+    render();
+  }
+
   function render() {
     if (!history.length) {
       elMsgs.innerHTML = '<div class="empty">Send a message to talk to the local model.</div>';
@@ -855,6 +867,23 @@
     }
     if (r === "assistant" && m.usageMeta) {
       div.appendChild(usageFooterEl(m.usageMeta, m.agentToolCount));
+    }
+    if (typeof index === "number") {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "msg-delete";
+      del.textContent = "×";
+      del.setAttribute("aria-label", "Delete message");
+      del.title = "Remove from history";
+      if (agentBusy) {
+        del.disabled = true;
+      }
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        deleteMessageAt(index);
+      });
+      div.appendChild(del);
     }
     return div;
   }
