@@ -13,7 +13,7 @@ import {
   type StagedAudioClip,
 } from "./whisper-transcribe-tool.js";
 import { getResolvedSettings } from "./settings-store.js";
-import { getLogger } from "../utils/logger.js";
+import { getLogger, logToolInfo } from "../utils/logger.js";
 
 const log = getLogger("agent-runner");
 
@@ -129,7 +129,7 @@ export async function runChatWithWebSearchTool(opts: {
   const stepsOut: AgentStepPayload[] = [];
 
   for (let round = 0; round < maxRounds; round += 1) {
-    log.info("agent round", { round });
+    logToolInfo("agent", "round", { round });
     const streamed = await streamCompletionPost({
       messages: msgs,
       tools: [webSearchOpenAiTool, scheduleJobOpenAiTool, sttOpenAiTool, ttsOpenAiTool],
@@ -186,7 +186,7 @@ export async function runChatWithWebSearchTool(opts: {
         };
         opts.onStep?.(stepTtsDone);
         stepsOut.push(stepTtsDone);
-        log.info("agent tts tool", { round, ok });
+        logToolInfo("tts", "done", { round, ok });
         msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(ttsResult.llm) });
         continue;
       }
@@ -229,7 +229,7 @@ export async function runChatWithWebSearchTool(opts: {
         };
         opts.onStep?.(stepDone);
         stepsOut.push(stepDone);
-        log.info("agent stt tool", { round, ok, file_name: stepDone.file_name });
+        logToolInfo("stt", "done", { round, ok, file_name: stepDone.file_name });
         msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(result) });
         continue;
       }
@@ -268,7 +268,7 @@ export async function runChatWithWebSearchTool(opts: {
         };
         opts.onStep?.(step);
         stepsOut.push(step);
-        log.info("agent schedule_job tool", { round, ok, summary });
+        logToolInfo("schedule_job", "done", { round, ok, action: schedAction, summary });
         msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(result) });
         continue;
       }
@@ -313,7 +313,7 @@ export async function runChatWithWebSearchTool(opts: {
         }
         const sn = result.results[0].snippet.replace(/\s+/g, " ").slice(0, 120);
         previewSummary = `${host}: ${sn}${result.results[0].snippet.length > 120 ? "…" : ""}`;
-        log.info("agent web_search tool", {
+        logToolInfo("web_search", "hits", {
           round,
           query: q,
           provider: providerLabel,
@@ -328,8 +328,10 @@ export async function runChatWithWebSearchTool(opts: {
           query: q,
           error: result.error,
         });
+        logToolInfo("web_search", "fail", { round, query: q, error: result.error });
       } else {
         log.warn("agent web_search tool", { round, query: q, note: "ok but zero hits" });
+        logToolInfo("web_search", "empty", { round, query: q });
       }
 
       const done: AgentStepPayload = {

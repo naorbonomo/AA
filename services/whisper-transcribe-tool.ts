@@ -2,6 +2,7 @@
 
 import type { ResolvedWhisper } from "../config/user-settings.js";
 import { transcribePcm } from "./whisper-transformers.js";
+import { logToolInfo } from "../utils/logger.js";
 
 export const sttOpenAiTool = {
   type: "function" as const,
@@ -69,12 +70,14 @@ export async function executeSttTool(opts: {
   const { file_name, language, task } = parseArgs(rawArgs);
   const key = file_name ?? "";
   if (!key) {
+    logToolInfo("stt", "skip", { reason: "file_name required" });
     return { ok: false, error: "file_name required" };
   }
   const clip = stagedByName.get(key);
   if (!clip) {
     const names = [...stagedByName.keys()];
     const hint = names.length ? ` Staged audio: ${names.join(", ")}.` : " No audio staged for this turn.";
+    logToolInfo("stt", "skip", { key, staged: names.length });
     return { ok: false, error: `No attachment named "${key}".${hint}` };
   }
   const r = await transcribePcm({
@@ -86,7 +89,9 @@ export async function executeSttTool(opts: {
     onProgress,
   });
   if (r.ok) {
+    logToolInfo("stt", "ok", { file_name: key, chars: r.text.length });
     return { ok: true, text: r.text };
   }
+  logToolInfo("stt", "fail", { file_name: key, error: r.error });
   return { ok: false, error: r.error };
 }

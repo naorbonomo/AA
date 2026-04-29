@@ -1,6 +1,7 @@
 /** OpenAI-function `tts`: local Transformers.js VITS (English); tool JSON stays small (no audio bytes). */
 
 import { synthesizeTtsPcm } from "./tts-transformers.js";
+import { logToolInfo } from "../utils/logger.js";
 
 export const ttsOpenAiTool = {
   type: "function" as const,
@@ -49,16 +50,23 @@ export async function executeTtsTool(rawArgs: string): Promise<{
 }> {
   const { text } = parseArgs(rawArgs);
   if (!text) {
+    logToolInfo("tts", "skip", { reason: "text required" });
     return { llm: { ok: false, error: "text required" } };
   }
 
   const syn = await synthesizeTtsPcm({ text });
   if (!syn.ok) {
+    logToolInfo("tts", "fail", { error: syn.error });
     return { llm: { ok: false, error: syn.error } };
   }
 
   const b64 = syn.wav.toString("base64");
   const dataUrl = `data:audio/wav;base64,${b64}`;
+  logToolInfo("tts", "ok", {
+    duration_seconds: Math.round(syn.durationSec * 100) / 100,
+    sample_rate: syn.sampleRate,
+    chars: text.length,
+  });
   return {
     llm: {
       ok: true,

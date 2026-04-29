@@ -191,6 +191,7 @@ function mergeLogging(u: UserLogging | undefined): ResolvedLogging {
   return {
     logToFile: x.logToFile ?? loggingDef.DEFAULT_LOG_TO_FILE,
     logToConsole: x.logToConsole ?? loggingDef.DEFAULT_LOG_TO_CONSOLE,
+    logTools: x.logTools === true,
   };
 }
 
@@ -300,8 +301,20 @@ function trimEmptyBranches(s: UserSettings): UserSettings {
   if (s.llm && Object.keys(s.llm).length > 0) {
     out.llm = s.llm;
   }
-  if (s.logging && Object.keys(s.logging).length > 0) {
-    out.logging = s.logging;
+  if (s.logging) {
+    const lg: UserLogging = {};
+    if (typeof s.logging.logToFile === "boolean") {
+      lg.logToFile = s.logging.logToFile;
+    }
+    if (typeof s.logging.logToConsole === "boolean") {
+      lg.logToConsole = s.logging.logToConsole;
+    }
+    if (typeof s.logging.logTools === "boolean") {
+      lg.logTools = s.logging.logTools;
+    }
+    if (Object.keys(lg).length) {
+      out.logging = lg;
+    }
   }
   if (s.agent && Object.keys(s.agent).length > 0) {
     out.agent = s.agent;

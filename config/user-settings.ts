@@ -16,6 +16,8 @@ export type UserLlm = {
 export type UserLogging = {
   logToFile?: boolean;
   logToConsole?: boolean;
+  /** Verbose tool tracing to file/console (see `logging_config.ts`). */
+  logTools?: boolean;
 };
 
 export type UserAgent = {
@@ -78,6 +80,7 @@ export type ResolvedLlm = {
 export type ResolvedLogging = {
   logToFile: boolean;
   logToConsole: boolean;
+  logTools: boolean;
 };
 
 export type ResolvedAgent = {

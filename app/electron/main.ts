@@ -609,6 +609,7 @@ function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
     const logging: Partial<UserLogging> = {};
     if (typeof g.logToFile === "boolean") logging.logToFile = g.logToFile;
     if (typeof g.logToConsole === "boolean") logging.logToConsole = g.logToConsole;
+    if (typeof g.logTools === "boolean") logging.logTools = g.logTools;
     if (Object.keys(logging).length) out.logging = logging as UserLogging;
   }
 

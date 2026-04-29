@@ -15,7 +15,7 @@ import {
 import { getLogger } from "../utils/logger.js";
 import { getResolvedSettings } from "./settings-store.js";
 import { getSecrets } from "./secrets-store.js";
-import { runChatWithWebSearchTool } from "./agent-runner.js";
+import { runChatWithWebSearchTool, type AgentStepPayload } from "./agent-runner.js";
 import { appendTelegramMessages, readTelegramChatMessages } from "./telegram-history-store.js";
 import {
   decodeAudioFileTo16kMonoFloat,
@@ -24,6 +24,7 @@ import {
   safeUnlink,
   telegramGetFilePath,
   tempTelegramVoicePath,
+  wavBytesToOggOpus,
 } from "./telegram-voice.js";
 import { transcribePcm } from "./whisper-transformers.js";
 
@@ -211,6 +212,69 @@ async function apiSendMessage(
   }
 }
 
+function wavBufferFromDataUrl(dataUrl: string): Buffer | null {
+  const m = /^data:audio\/wav;base64,([^,]+)/i.exec(dataUrl.trim());
+  if (!m?.[1]) {
+    return null;
+  }
+  try {
+    return Buffer.from(m[1], "base64");
+  } catch {
+    return null;
+  }
+}
+
+async function apiSendVoiceOgg(token: string, chatId: number, ogg: Buffer, filename: string): Promise<void> {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  const name = filename.endsWith(".ogg") ? filename : "voice.ogg";
+  form.append("voice", new Blob([new Uint8Array(ogg)]), name);
+  const r = await fetch(`${TELEGRAM_API_BASE}/bot${token}/sendVoice`, {
+    method: "POST",
+    body: form,
+  });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => "");
+    log.error("sendVoice failed", { status: r.status, errText: errText.slice(0, 500) });
+    throw new Error(`Telegram sendVoice ${r.status}`);
+  }
+}
+
+async function apiSendDocumentBuffer(
+  token: string,
+  chatId: number,
+  buf: Buffer,
+  filename: string,
+): Promise<void> {
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append("document", new Blob([new Uint8Array(buf)]), filename);
+  const r = await fetch(`${TELEGRAM_API_BASE}/bot${token}/sendDocument`, {
+    method: "POST",
+    body: form,
+  });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => "");
+    log.error("sendDocument (tts fallback) failed", { status: r.status, errText: errText.slice(0, 500) });
+    throw new Error(`Telegram sendDocument ${r.status}`);
+  }
+}
+
+/** Smith-style: `sendVoice` (OGG Opus) when ffmpeg converts WAV; else `sendDocument` with WAV. */
+async function apiSendTtsWavAsVoiceOrDocument(
+  token: string,
+  chatId: number,
+  wav: Buffer,
+  baseName: string,
+): Promise<void> {
+  const ogg = wavBytesToOggOpus(wav);
+  if (ogg && ogg.length > 0) {
+    await apiSendVoiceOgg(token, chatId, ogg, `${baseName}.ogg`);
+    return;
+  }
+  await apiSendDocumentBuffer(token, chatId, wav, `${baseName}.wav`);
+}
+
 const chainByChat = new Map<number, Promise<void>>();
 
 function enqueueChatWork(chatId: number, fn: () => Promise<void>): void {
@@ -240,11 +304,17 @@ async function runAgentAndReply(
   const historyWithUser = readTelegramChatMessages(chatId);
 
   let out: string;
+  const ttsDataUrls: string[] = [];
   try {
     const r = await runChatWithWebSearchTool({
       history: historyWithUser,
       maxToolRounds: settings.agent.maxToolRounds,
       onStreamDelta: undefined,
+      onStep: (p: AgentStepPayload) => {
+        if (p.kind === "tts" && p.status === "done" && p.ok && p.dataUrl) {
+          ttsDataUrls.push(p.dataUrl);
+        }
+      },
     });
     out = r.text?.trim() ? r.text.trim() : "(empty reply)";
   } catch (e: unknown) {
@@ -255,6 +325,20 @@ async function runAgentAndReply(
 
   appendTelegramMessages(chatId, [{ role: "assistant", content: out }]);
   await apiSendMessage(token, chatId, out, replyToMessageId);
+  for (let i = 0; i < ttsDataUrls.length; i += 1) {
+    const raw = ttsDataUrls[i];
+    if (!raw) continue;
+    const buf = wavBufferFromDataUrl(raw);
+    if (!buf?.length) {
+      log.warn("telegram tts bad dataUrl", { index: i });
+      continue;
+    }
+    try {
+      await apiSendTtsWavAsVoiceOrDocument(token, chatId, buf, `aa-tts-${i + 1}`);
+    } catch (e: unknown) {
+      log.warn("telegram tts voice/document", { index: i, msg: e instanceof Error ? e.message : String(e) });
+    }
+  }
 }
 
 function extractUserText(message: Record<string, unknown>): { userText: string | null; replyToId?: number } {

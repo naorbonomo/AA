@@ -10,7 +10,7 @@
 
 import * as webSearchCfg from "../config/web_search_config.js";
 import { getSecrets } from "./secrets-store.js";
-import { getLogger } from "../utils/logger.js";
+import { getLogger, logToolInfo } from "../utils/logger.js";
 
 const log = getLogger("web-search");
 
@@ -140,7 +140,7 @@ async function searchTavily(query: string, key: string, max: number): Promise<We
       out.push({ title: title || url, url, snippet });
     }
   }
-  log.info("tavily ok", {
+  logToolInfo("tavily", "ok", {
     query,
     hits: out.length,
     hasShortAnswer: Boolean(answerRaw),

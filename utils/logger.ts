@@ -91,6 +91,22 @@ function emit(level: LogLevel, name: string, args: unknown[]): void {
   emitConsole(level, line);
 }
 
+function logToolsEnabled(): boolean {
+  try {
+    return getResolvedSettings().logging.logTools === true;
+  } catch {
+    return loggingDefaults.DEFAULT_LOG_TOOLS;
+  }
+}
+
+/** Verbose agent-tool tracing when Settings → Logging → “Log agent tools” is on. */
+export function logToolInfo(toolName: string, ...args: unknown[]): void {
+  if (!logToolsEnabled()) {
+    return;
+  }
+  emit("info", `tool:${toolName}`, args);
+}
+
 /** Small logger bound to `name` — prefer over raw `console` in app code. */
 export function getLogger(name: string) {
   return {

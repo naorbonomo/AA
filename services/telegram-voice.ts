@@ -103,3 +103,38 @@ export function tempTelegramVoicePath(chatId: number, messageId: number, ext: st
   const base = `aa-tg-${chatId}-${messageId}${e}`;
   return path.join(os.tmpdir(), base);
 }
+
+/**
+ * PCM WAV bytes → OGG Opus (Telegram `sendVoice`). Mirrors Smith `bot._wav_to_ogg`.
+ * Returns null if ffmpeg missing or conversion fails.
+ */
+export function wavBytesToOggOpus(wav: Buffer): Buffer | null {
+  if (!ffmpegAvailable() || !wav.length) {
+    return null;
+  }
+  const base = `aa-tts-ogg-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const wavPath = path.join(os.tmpdir(), `${base}.wav`);
+  const oggPath = path.join(os.tmpdir(), `${base}.ogg`);
+  try {
+    fs.writeFileSync(wavPath, wav);
+    const r = spawnSync(
+      "ffmpeg",
+      ["-y", "-i", wavPath, "-c:a", "libopus", "-b:a", "64k", oggPath],
+      { encoding: "utf8", maxBuffer: 25 * 1024 * 1024, timeout: 120_000 },
+    );
+    if (r.status !== 0) {
+      log.warn("ffmpeg wav→ogg", { stderr: String(r.stderr || "").slice(0, 400) });
+      return null;
+    }
+    if (!fs.existsSync(oggPath) || fs.statSync(oggPath).size < 1) {
+      return null;
+    }
+    return fs.readFileSync(oggPath);
+  } catch (e) {
+    log.warn("wavBytesToOggOpus", e instanceof Error ? e.message : String(e));
+    return null;
+  } finally {
+    safeUnlink(wavPath);
+    safeUnlink(oggPath);
+  }
+}

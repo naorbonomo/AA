@@ -18,6 +18,7 @@
   const elLlVision = document.getElementById("set-llm-vision");
   const elLogFile = document.getElementById("set-log-file");
   const elLogCon = document.getElementById("set-log-console");
+  const elLogTools = document.getElementById("set-log-tools");
   const elAgentR = document.getElementById("set-agent-rounds");
   const elAgentL = document.getElementById("set-agent-label");
   const elAgentPrompt = document.getElementById("set-agent-prompt");
@@ -297,6 +298,9 @@
     }
     elLogFile.checked = !!r.logging.logToFile;
     elLogCon.checked = !!r.logging.logToConsole;
+    if (elLogTools instanceof HTMLInputElement) {
+      elLogTools.checked = !!r.logging.logTools;
+    }
     elAgentR.value = String(r.agent.maxToolRounds);
     elAgentL.value = r.agent.sessionLabel || "";
     if (elAgentPrompt instanceof HTMLSelectElement) {
@@ -425,6 +429,7 @@
       logging: {
         logToFile: elLogFile.checked,
         logToConsole: elLogCon.checked,
+        logTools: elLogTools instanceof HTMLInputElement ? elLogTools.checked : false,
       },
       agent: {
         maxToolRounds: Number(elAgentR.value),
