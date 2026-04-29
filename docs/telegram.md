@@ -25,3 +25,10 @@
 
 - Polling is on by default → bot works while AA window is open.
 - Webhook: only if you set `"telegram": { "webhookPort": 8787 }` in `aa-user-settings.json` *and* point `setWebhook` at a public URL (tunnel).
+- **Voice:** same Whisper as desktop. **`ffmpeg`** on PATH decodes Telegram voice files (`.oga` / Opus). Install from [ffmpeg.org](https://ffmpeg.org/), restart AA, retry.
+- **Agent/tools:** same main-process loop as Chat (`web_search`, `schedule_job`, `stt`, `tts`, …).
+
+## History `source`
+
+- **`aa-telegram-chats/<chat_id>.json`** — each row includes `"source": "telegram"` with `role` / `content`.
+- **`aa-chat-history.json`** — new saves set `"source": "app"` for Chat turns and `"source": "scheduler"` for scheduled runs; older rows may omit `source` (treat as app).

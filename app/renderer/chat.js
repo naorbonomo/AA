@@ -13,7 +13,7 @@
    * msPerToken = wallMs / completion_tokens when known (footer tok/s); else wallMs / total_tokens.
    */
   /** @typedef {{ name: string, kind: "image"|"audio"|"file", previewUrl?: string, thumbnailDataUrl?: string }} RowAttachment */
-  /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, agentToolCount?: number, agentTtsClips?: { dataUrl: string }[], source?: "scheduler", errReply?: boolean, images?: { fileName: string, mediaType: string, base64: string }[], displayAttachments?: RowAttachment[] }} Row */
+  /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, agentToolCount?: number, agentTtsClips?: { dataUrl: string }[], source?: "app" | "telegram" | "scheduler", errReply?: boolean, images?: { fileName: string, mediaType: string, base64: string }[], displayAttachments?: RowAttachment[] }} Row */
 
   const aa = window.aaDesktop;
 
@@ -526,7 +526,7 @@
       if (typeof m.reasoning === "string" && m.reasoning.length) o.reasoning = m.reasoning;
       if (typeof m.agentTrace === "string" && m.agentTrace.length) o.agentTrace = m.agentTrace;
       if (m.usageMeta && typeof m.usageMeta === "object") o.usageMeta = m.usageMeta;
-      if (m.source === "scheduler") o.source = "scheduler";
+      if (m.source === "app" || m.source === "telegram" || m.source === "scheduler") o.source = m.source;
       if (m.errReply === true) o.errReply = true;
       if (m.displayAttachments && m.displayAttachments.length) {
         o.displayAttachments = m.displayAttachments.map((a) => {
@@ -588,8 +588,9 @@
     if (role !== "user" && role !== "assistant" && role !== "system") return null;
     /** @type {typeof history[number]} */
     const row = { role, content: typeof o.content === "string" ? o.content : "" };
-    if (o.source === "scheduler") row.source = "scheduler";
-    else if (
+    if (o.source === "app" || o.source === "telegram" || o.source === "scheduler") {
+      row.source = o.source;
+    } else if (
       row.content &&
       /^\[Scheduled:[^\]]+\]\n\n/.test(row.content)
     ) {
@@ -721,6 +722,7 @@
       "msg role-" +
       r +
       (m.source === "scheduler" ? " msg--scheduler-push" : "") +
+      (m.source === "telegram" ? " msg--telegram" : "") +
       (r === "assistant" && m.errReply ? " error" : "");
     const head = roleHeadHtml(r, m.atMs);
     if (r === "assistant" && m.reasoning) {
@@ -1215,6 +1217,7 @@
         role: "assistant",
         atMs: Date.now(),
         content: res.text || "",
+        source: "app",
         ...(streamedReasoningAcc.trim() ? { reasoning: streamedReasoningAcc } : {}),
         ...(trace ? { agentTrace: trace } : {}),
         ...(ttsClips.length ? { agentTtsClips: ttsClips } : {}),
@@ -1225,7 +1228,7 @@
     } catch (err) {
       pend.remove();
       const errText = err instanceof Error ? err.message : String(err);
-      history.push({ role: "assistant", atMs: Date.now(), content: errText, errReply: true });
+      history.push({ role: "assistant", atMs: Date.now(), content: errText, errReply: true, source: "app" });
     } finally {
       agentBusy = false;
       elSend.disabled = false;
@@ -1244,7 +1247,7 @@
     const { userContent, staged, images, displayAttachments } = await buildUserMessageAndStaged(text);
     lastTurnStagedAudio = staged.length ? staged : null;
     /** @type {typeof history[number]} */
-    const urow = { role: "user", content: userContent, atMs: Date.now() };
+    const urow = { role: "user", content: userContent, atMs: Date.now(), source: "app" };
     if (images.length) {
       urow.images = images;
     }

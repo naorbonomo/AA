@@ -17,6 +17,15 @@ import { getResolvedSettings } from "./settings-store.js";
 import { getSecrets } from "./secrets-store.js";
 import { runChatWithWebSearchTool } from "./agent-runner.js";
 import { appendTelegramMessages, readTelegramChatMessages } from "./telegram-history-store.js";
+import {
+  decodeAudioFileTo16kMonoFloat,
+  downloadTelegramFileBytes,
+  ffmpegAvailable,
+  safeUnlink,
+  telegramGetFilePath,
+  tempTelegramVoicePath,
+} from "./telegram-voice.js";
+import { transcribePcm } from "./whisper-transformers.js";
 
 const log = getLogger("telegram-channel");
 
@@ -269,6 +278,78 @@ function extractUserText(message: Record<string, unknown>): { userText: string |
   return { userText: null, replyToId };
 }
 
+async function processTelegramVoiceMessage(opts: {
+  token: string;
+  chatId: number;
+  fileId: string;
+  replyToMessageId: number | undefined;
+  caption: string;
+  messageId: number;
+}): Promise<void> {
+  const { token, chatId, fileId, replyToMessageId, caption, messageId } = opts;
+  if (!ffmpegAvailable()) {
+    await apiSendMessage(
+      token,
+      chatId,
+      "Voice needs ffmpeg on PATH (https://ffmpeg.org/). Install, restart AA, send again.",
+      replyToMessageId,
+    );
+    return;
+  }
+  const settings = getResolvedSettings();
+  let localPath = "";
+  try {
+    const relPath = await telegramGetFilePath(token, fileId);
+    const buf = await downloadTelegramFileBytes(token, relPath);
+    const ext = path.extname(relPath) || ".oga";
+    localPath = tempTelegramVoicePath(chatId, messageId, ext);
+    fs.writeFileSync(localPath, buf);
+    const pcm = decodeAudioFileTo16kMonoFloat(localPath);
+    if (!pcm) {
+      await apiSendMessage(
+        token,
+        chatId,
+        "Could not decode voice with ffmpeg.",
+        replyToMessageId,
+      );
+      return;
+    }
+    const tr = await transcribePcm({
+      samples: pcm.samples,
+      sampleRate: pcm.sampleRate,
+      whisper: settings.whisper,
+    });
+    if (!tr.ok) {
+      await apiSendMessage(
+        token,
+        chatId,
+        `Transcription failed: ${tr.error.slice(0, 500)}`,
+        replyToMessageId,
+      );
+      return;
+    }
+    const raw = tr.text.trim();
+    if (!raw) {
+      await apiSendMessage(token, chatId, "(empty transcription)", replyToMessageId);
+      return;
+    }
+    const cap = caption.trim();
+    const inner = cap ? `${cap}\n${raw}` : raw;
+    const userText = `<voice_message transcribed="true">${inner}</voice_message>`;
+    await runAgentAndReply(token, chatId, userText, replyToMessageId);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("telegram voice", msg);
+    await apiSendMessage(token, chatId, `Voice error: ${msg.slice(0, 400)}`, replyToMessageId).catch(
+      () => {},
+    );
+  } finally {
+    if (localPath) {
+      safeUnlink(localPath);
+    }
+  }
+}
+
 function scheduleTelegramAgentReply(
   token: string,
   chatId: number,
@@ -305,12 +386,23 @@ export async function handleTelegramUpdate(update: Record<string, unknown>): Pro
 
   const voice = message.voice ?? message.audio;
   if (voice && typeof voice === "object" && (voice as { file_id?: string }).file_id) {
-    void apiSendMessage(
-      token,
-      chatId,
-      "Voice/audio not supported in AA yet — send text or caption on media.",
-      typeof message.message_id === "number" ? message.message_id : undefined,
-    ).catch(() => {});
+    const fid = String((voice as { file_id: string }).file_id);
+    const replyId = typeof message.message_id === "number" ? message.message_id : undefined;
+    const mid =
+      typeof message.message_id === "number" && Number.isInteger(message.message_id)
+        ? message.message_id
+        : Date.now();
+    const cap = typeof message.caption === "string" ? message.caption : "";
+    enqueueChatWork(chatId, () =>
+      processTelegramVoiceMessage({
+        token,
+        chatId,
+        fileId: fid,
+        replyToMessageId: replyId,
+        caption: cap,
+        messageId: mid,
+      }),
+    );
     return;
   }
 

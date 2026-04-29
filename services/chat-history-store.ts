@@ -59,6 +59,8 @@ export type ChatHistoryRow = {
   displayAttachments?: ChatHistoryAttachment[];
   /** Agent `tts` tool output: WAV data URLs for replay after restart. */
   agentTtsClips?: ChatHistoryTtsClip[];
+  /** Where the row originated: main Chat UI, Telegram bridge, or scheduled job. */
+  source?: "app" | "telegram" | "scheduler";
 };
 
 const MAX_ROWS = 500;
@@ -128,6 +130,10 @@ function normalizeRow(raw: unknown): ChatHistoryRow | null {
   }
   if (o.errReply === true) {
     row.errReply = true;
+  }
+  const src = o.source;
+  if (src === "app" || src === "telegram" || src === "scheduler") {
+    row.source = src;
   }
   if (Array.isArray(o.displayAttachments)) {
     const list: ChatHistoryAttachment[] = [];

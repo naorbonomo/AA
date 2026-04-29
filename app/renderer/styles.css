@@ -1050,6 +1050,10 @@ body {
   color: rgba(251, 191, 36, 0.92);
 }
 
+.msg.msg--telegram {
+  border-left: 2px solid rgba(56, 189, 248, 0.45);
+}
+
 .msg.pending {
   opacity: 0.75;
 }

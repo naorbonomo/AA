@@ -151,6 +151,7 @@ export function appendSchedulerJobToDisk(p: SchedulerJobPersistInput): void {
     role: "assistant",
     content,
     atMs,
+    source: "scheduler",
   };
   if (trace) row.agentTrace = trace;
   const um = usageSnapshotToMeta(p.usage ?? null, 0);
