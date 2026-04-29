@@ -41,12 +41,21 @@ export type UserWhisper = {
   multilingual?: boolean;
 };
 
+/** Telegram ingress (Smith-style: long-poll and/or local webhook). Token in Secrets (`telegram_bot_token`). */
+export type UserTelegram = {
+  /** `getUpdates` loop in main process (default true). */
+  usePolling?: boolean;
+  /** HTTP `POST /telegram/webhook` on this port; 0 = off (default). Bind `127.0.0.1` only — use tunnel for cloud. */
+  webhookPort?: number;
+};
+
 export type UserSettings = {
   llm?: UserLlm;
   logging?: UserLogging;
   agent?: UserAgent;
   appTime?: UserAppTime;
   whisper?: UserWhisper;
+  telegram?: UserTelegram;
 
   /** @deprecated Legacy flat layout — migrated on load. */
   llmBaseUrl?: string;
@@ -93,10 +102,16 @@ export type ResolvedWhisper = {
   multilingual: boolean;
 };
 
+export type ResolvedTelegram = {
+  usePolling: boolean;
+  webhookPort: number;
+};
+
 export type ResolvedAppSettings = {
   llm: ResolvedLlm;
   logging: ResolvedLogging;
   agent: ResolvedAgent;
   appTime: ResolvedAppTime;
   whisper: ResolvedWhisper;
+  telegram: ResolvedTelegram;
 };

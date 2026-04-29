@@ -17,12 +17,14 @@ import type {
   ResolvedAppSettings,
   ResolvedLlm,
   ResolvedLogging,
+  ResolvedTelegram,
   ResolvedWhisper,
   UserAgent,
   UserAppTime,
   UserLlm,
   UserLogging,
   UserSettings,
+  UserTelegram,
   UserWhisper,
 } from "../config/user-settings.js";
 import { mergeResolvedAppTime } from "../utils/app-time.js";
@@ -127,12 +129,24 @@ function normalizeDiskShape(raw: unknown): UserSettings {
     }
   }
 
+  const telegram: UserTelegram = {};
+  if (typeof o.telegram === "object" && o.telegram !== null) {
+    const tg = o.telegram as Record<string, unknown>;
+    if (typeof tg.usePolling === "boolean") {
+      telegram.usePolling = tg.usePolling;
+    }
+    if (typeof tg.webhookPort === "number" && Number.isFinite(tg.webhookPort)) {
+      telegram.webhookPort = Math.floor(tg.webhookPort);
+    }
+  }
+
   const out: UserSettings = {};
   if (Object.keys(llm).length) out.llm = llm;
   if (Object.keys(logging).length) out.logging = logging;
   if (Object.keys(agent).length) out.agent = agent;
   if (Object.keys(appTime).length) out.appTime = appTime;
   if (Object.keys(whisper).length) out.whisper = whisper;
+  if (Object.keys(telegram).length) out.telegram = telegram;
   return out;
 }
 
@@ -217,6 +231,17 @@ function mergeWhisper(u: UserWhisper | undefined): ResolvedWhisper {
   };
 }
 
+function mergeTelegram(u: UserTelegram | undefined): ResolvedTelegram {
+  const x = u ?? {};
+  const wp = x.webhookPort;
+  const webhookPort =
+    typeof wp === "number" && Number.isFinite(wp) && wp > 0 && wp < 65536 ? Math.floor(wp) : 0;
+  return {
+    usePolling: x.usePolling !== false,
+    webhookPort,
+  };
+}
+
 function mergeUserWithDefaults(u: UserSettings): ResolvedAppSettings {
   return {
     llm: mergeLlm(u.llm),
@@ -224,6 +249,7 @@ function mergeUserWithDefaults(u: UserSettings): ResolvedAppSettings {
     agent: mergeAgent(u.agent),
     appTime: mergeResolvedAppTime(u.appTime),
     whisper: mergeWhisper(u.whisper),
+    telegram: mergeTelegram(u.telegram),
   };
 }
 
@@ -260,6 +286,7 @@ export function saveUserSettingsPatch(patch: Partial<UserSettings>): ResolvedApp
     agent: { ...(cur.agent ?? {}), ...(patch.agent ?? {}) },
     appTime: { ...(cur.appTime ?? {}), ...(patch.appTime ?? {}) },
     whisper: { ...(cur.whisper ?? {}), ...(patch.whisper ?? {}) },
+    telegram: { ...(cur.telegram ?? {}), ...(patch.telegram ?? {}) },
   };
 
   writeUserFileNested(trimEmptyBranches(next));
@@ -304,6 +331,21 @@ function trimEmptyBranches(s: UserSettings): UserSettings {
     }
     if (Object.keys(w).length) {
       out.whisper = w;
+    }
+  }
+  if (s.telegram) {
+    const tg: UserTelegram = {};
+    if (typeof s.telegram.usePolling === "boolean") {
+      tg.usePolling = s.telegram.usePolling;
+    }
+    if (typeof s.telegram.webhookPort === "number" && Number.isFinite(s.telegram.webhookPort)) {
+      const p = Math.floor(s.telegram.webhookPort);
+      if (p > 0 && p < 65536) {
+        tg.webhookPort = p;
+      }
+    }
+    if (Object.keys(tg).length) {
+      out.telegram = tg;
     }
   }
   return out;

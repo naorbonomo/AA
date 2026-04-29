@@ -12,6 +12,7 @@ import type {
   UserLogging,
   UserLlm,
   UserSettings,
+  UserTelegram,
   UserWhisper,
 } from "../../config/user-settings.js";
 import type { ChatImagePart, ChatMessage, ChatUsageSnapshot, StreamDelta } from "../../services/llm.js";
@@ -38,6 +39,14 @@ import {
 import { getLogger } from "../../utils/logger.js";
 import { utcMsToWallDatetimeLocalValue, wallDateTimeInZoneToUtcMs } from "../../utils/app-time.js";
 import { initializeChatHistoryStore, readChatHistory, writeChatHistory } from "../../services/chat-history-store.js";
+import { initializeTelegramHistoryStore } from "../../services/telegram-history-store.js";
+import {
+  configureTelegramAppIconPath,
+  configureTelegramUserDataDir,
+  startTelegramIntegration,
+  stopTelegramIntegration,
+  type TelegramIntegrationHandles,
+} from "../../services/telegram-channel.js";
 import {
   initializeSchedulerStore,
   createScheduledJob,
@@ -54,15 +63,22 @@ import { setWhisperCacheDir, transcribePcm } from "../../services/whisper-transf
 
 const log = getLogger("electron-main");
 
+let telegramHandles: TelegramIntegrationHandles | null = null;
+
 const __electronDir = path.dirname(fileURLToPath(import.meta.url));
 
 function aaRoot(): string {
   return path.resolve(__electronDir, "..", "..", "..");
 }
 
-/** PNG for BrowserWindow + Dock — Electron NativeImage does not reliably load `.icns` from disk here; keep `app-icon.icns` for packaged `.app` / electron-builder. */
+/** PNG for BrowserWindow + Dock — Electron NativeImage; keep separate from Telegram profile JPG. */
 function appIconPath(): string {
   return path.join(aaRoot(), "resources", "app-icon.png");
+}
+
+/** Bundled Telegram bot profile JPG (`/icon`, `/set_bot_icon`); ships under `resources/` with app. */
+function telegramProfileAssetPath(): string {
+  return path.join(aaRoot(), "resources", "telegram-bot-profile.jpg");
 }
 
 function rendererHtmlPath(): string {
@@ -640,6 +656,19 @@ function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
     }
   }
 
+  if ("telegram" in o && o.telegram && typeof o.telegram === "object") {
+    const tg = o.telegram as Record<string, unknown>;
+    const telegram: Partial<UserTelegram> = {};
+    if (typeof tg.usePolling === "boolean") telegram.usePolling = tg.usePolling;
+    if (tg.webhookPort !== undefined) {
+      const p = Number(tg.webhookPort);
+      if (Number.isFinite(p)) telegram.webhookPort = Math.floor(p);
+    }
+    if (Object.keys(telegram).length) {
+      out.telegram = telegram as UserTelegram;
+    }
+  }
+
   return out;
 }
 
@@ -651,13 +680,17 @@ app.whenReady().then(() => {
   initializeSettingsStore({ userDataDir: ud });
   initializeSecretsStore({ userDataDir: ud });
   initializeChatHistoryStore({ userDataDir: ud });
+  initializeTelegramHistoryStore({ userDataDir: ud });
   initializeSchedulerStore({ userDataDir: ud });
+  configureTelegramUserDataDir(ud);
+  configureTelegramAppIconPath(telegramProfileAssetPath());
   setWhisperCacheDir(path.join(ud, "whisper-models"));
   setTtsCacheDir(path.join(ud, "tts-models"));
   log.info("userData", ud);
   log.info("settings file", getSettingsFilePath());
   log.info("scheduler jobs file", getSchedulerJobsFilePath());
   startSchedulerEngine();
+  telegramHandles = startTelegramIntegration();
 
   if (process.platform === "darwin") {
     app.dock.setIcon(appIconPath());
@@ -670,6 +703,16 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", (e) => {
+  if (!telegramHandles) {
+    return;
+  }
+  e.preventDefault();
+  const h = telegramHandles;
+  telegramHandles = null;
+  void stopTelegramIntegration(h).then(() => app.quit());
 });
 
 app.on("activate", () => {
