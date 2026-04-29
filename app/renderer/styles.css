@@ -21,10 +21,16 @@
   --scheduler-push-bg: rgba(251, 191, 36, 0.08);
   --hairline: max(1px, 0.06vmin);
   --fs-root: clamp(50%, 2.35vmin, 110%);
-  /* Single corner radius for all bordered panels / controls (scales with viewport). */
+  /* Compact chrome: tabs, inputs, buttons, chips — cards use --radius-card */
   --radius: 0.45vmin;
   /* Chat bubbles — rounder than chrome panels */
   --radius-msg: 1.85vmin;
+  /* Settings / Scheduler topic cards — match bubble rounding */
+  --radius-card: var(--radius-msg);
+  /* Scrollbars — thumb/track for Firefox `scrollbar-color` */
+  --scrollbar-thumb: rgba(68, 72, 92, 0.82);
+  --scrollbar-thumb-hover: rgba(110, 231, 183, 0.42);
+  --scrollbar-track: transparent;
 }
 
 * {
@@ -35,6 +41,8 @@ html {
   height: 100%;
   width: 100%;
   font-size: var(--fs-root);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 body {
@@ -49,6 +57,31 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Thin scrollbars — Chromium/Electron + Firefox (no OS default slab) */
+::-webkit-scrollbar {
+  width: max(6px, 0.42vmin);
+  height: max(6px, 0.42vmin);
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: max(2px, 0.14vmin) solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .top {
@@ -347,7 +380,7 @@ body {
   flex: 0 0 auto;
   width: 100%;
   border: var(--hairline) solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   background: linear-gradient(180deg, #14141c 0%, var(--panel) 100%);
   overflow: hidden;
 }
@@ -625,7 +658,7 @@ body {
   margin: 0.75em 0 1em;
   padding: 0.75em 1em;
   border: var(--hairline) solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   background: rgba(0, 0, 0, 0.15);
 }
 
@@ -684,7 +717,7 @@ body {
   padding: 0.85vh 1vw;
   max-height: min(28vh, 14rem);
   overflow: auto;
-  border-radius: var(--radius);
+  border-radius: var(--radius-card);
   border: var(--hairline) solid rgba(88, 88, 110, 0.35);
   background: rgba(0, 0, 0, 0.2);
   font: inherit;
