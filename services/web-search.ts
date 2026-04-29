@@ -37,6 +37,34 @@ export type WebSearchErr = {
 
 export type WebSearchResult = WebSearchOk | WebSearchErr;
 
+/** Cap hit snippets and Tavily answer in tool messages so agent POST body stays bounded (avoids brittle servers dropping huge JSON). */
+export function shrinkWebSearchForToolMessage(
+  result: WebSearchResult,
+  opts?: { maxSnippetChars?: number; maxAnswerChars?: number },
+): WebSearchResult {
+  if (!result.ok) {
+    return result;
+  }
+  const maxSnip = opts?.maxSnippetChars ?? 800;
+  const maxAns = opts?.maxAnswerChars ?? 2000;
+  const results = result.results.map((h) => {
+    const sn = h.snippet;
+    return {
+      ...h,
+      snippet: sn.length > maxSnip ? `${sn.slice(0, maxSnip)}…` : sn,
+    };
+  });
+  let short = result.tavily_short_answer;
+  if (typeof short === "string" && short.length > maxAns) {
+    short = `${short.slice(0, maxAns)}…`;
+  }
+  return {
+    ...result,
+    results,
+    ...(short !== null && short !== undefined ? { tavily_short_answer: short } : {}),
+  };
+}
+
 /** OpenAI-style `tools[]` entry for chat/completions agent loops. */
 export const webSearchOpenAiTool = {
   type: "function" as const,

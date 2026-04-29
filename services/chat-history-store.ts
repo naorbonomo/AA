@@ -34,6 +34,17 @@ export type ChatHistoryUsageMeta = {
   system_fingerprint?: string;
 };
 
+export type ChatHistoryAttachment = {
+  name: string;
+  kind: "image" | "audio" | "file";
+  thumbnailDataUrl?: string;
+};
+
+/** Assistant message: in-memory TTS WAV as data URL (same cap as persist). */
+export type ChatHistoryTtsClip = {
+  dataUrl: string;
+};
+
 export type ChatHistoryRow = {
   role: string;
   content: string;
@@ -46,18 +57,17 @@ export type ChatHistoryRow = {
   errReply?: boolean;
   /** User bubble attachment chips (image thumbnails as data URLs). */
   displayAttachments?: ChatHistoryAttachment[];
+  /** Agent `tts` tool output: WAV data URLs for replay after restart. */
+  agentTtsClips?: ChatHistoryTtsClip[];
 };
 
 const MAX_ROWS = 500;
 const MAX_FIELD = 2_000_000;
 /** Max length per persisted `data:` thumbnail (~2.5 MB ASCII). */
 const MAX_THUMB_DATA_URL = 2_500_000;
-
-export type ChatHistoryAttachment = {
-  name: string;
-  kind: "image" | "audio" | "file";
-  thumbnailDataUrl?: string;
-};
+/** Max length per TTS WAV data URL (base64); drops clip if larger. */
+const MAX_TTS_CLIP_DATA_URL = 6_000_000;
+const MAX_TTS_CLIPS_PER_ROW = 8;
 
 function clampStr(s: unknown, max: number): string {
   if (typeof s !== "string") return "";
@@ -138,6 +148,26 @@ function normalizeRow(raw: unknown): ChatHistoryRow | null {
     }
     if (list.length) {
       row.displayAttachments = list;
+    }
+  }
+  if (Array.isArray(o.agentTtsClips)) {
+    const clips: ChatHistoryTtsClip[] = [];
+    for (const raw of o.agentTtsClips) {
+      if (clips.length >= MAX_TTS_CLIPS_PER_ROW) {
+        break;
+      }
+      if (!raw || typeof raw !== "object") {
+        continue;
+      }
+      const co = raw as Record<string, unknown>;
+      const dataUrl = typeof co.dataUrl === "string" ? co.dataUrl : "";
+      if (!dataUrl.startsWith("data:audio/") || dataUrl.length > MAX_TTS_CLIP_DATA_URL) {
+        continue;
+      }
+      clips.push({ dataUrl });
+    }
+    if (clips.length) {
+      row.agentTtsClips = clips;
     }
   }
   return row;

@@ -13,7 +13,7 @@
    * msPerToken = wallMs / completion_tokens when known (footer tok/s); else wallMs / total_tokens.
    */
   /** @typedef {{ name: string, kind: "image"|"audio"|"file", previewUrl?: string, thumbnailDataUrl?: string }} RowAttachment */
-  /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, source?: "scheduler", errReply?: boolean, images?: { fileName: string, mediaType: string, base64: string }[], displayAttachments?: RowAttachment[] }} Row */
+  /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, agentToolCount?: number, agentTtsClips?: { dataUrl: string }[], source?: "scheduler", errReply?: boolean, images?: { fileName: string, mediaType: string, base64: string }[], displayAttachments?: RowAttachment[] }} Row */
 
   const aa = window.aaDesktop;
 
@@ -388,8 +388,8 @@
     return meta;
   }
 
-  /** @param {UsageMeta} meta */
-  function usageFooterEl(meta) {
+  /** @param {UsageMeta} meta @param {number|undefined} agentToolCount */
+  function usageFooterEl(meta, agentToolCount) {
     const el = document.createElement("div");
     el.className = "msg-usage";
     el.setAttribute("aria-label", "Generation stats");
@@ -409,9 +409,12 @@
     if (typeof meta.reasoning_tokens === "number") {
       parts.push("reasoning " + meta.reasoning_tokens);
     }
-    if (meta.msPerToken !== null && Number.isFinite(meta.msPerToken) && meta.msPerToken > 0) {
-      const tps = 1000 / meta.msPerToken;
-      parts.push(tps.toFixed(2) + " tok/s");
+    // if (meta.msPerToken !== null && Number.isFinite(meta.msPerToken) && meta.msPerToken > 0) {
+    //   const tps = 1000 / meta.msPerToken;
+    //   parts.push(tps.toFixed(2) + " tok/s");
+    // }
+    if (typeof agentToolCount === "number" && Number.isFinite(agentToolCount) && agentToolCount >= 0) {
+      parts.push(agentToolCount + " tool" + (agentToolCount === 1 ? "" : "s"));
     }
     el.textContent = parts.join(" · ");
     if (meta.system_fingerprint) {
@@ -539,6 +542,30 @@
           return x;
         });
       }
+      if (m.agentTtsClips && m.agentTtsClips.length) {
+        const maxClips = 8;
+        const maxLen = 6000000;
+        /** @type {{ dataUrl: string }[]} */
+        const clips = [];
+        for (const c of m.agentTtsClips) {
+          if (clips.length >= maxClips) {
+            break;
+          }
+          if (typeof c.dataUrl !== "string" || !c.dataUrl.startsWith("data:audio/")) {
+            continue;
+          }
+          if (c.dataUrl.length > maxLen) {
+            continue;
+          }
+          clips.push({ dataUrl: c.dataUrl });
+        }
+        if (clips.length) {
+          o.agentTtsClips = clips;
+        }
+      }
+      if (typeof m.agentToolCount === "number" && Number.isFinite(m.agentToolCount) && m.agentToolCount >= 0) {
+        o.agentToolCount = m.agentToolCount;
+      }
       return o;
     });
   }
@@ -575,6 +602,9 @@
       if (!Number.isNaN(parsed)) row.atMs = parsed;
     }
     if (typeof o.agentTrace === "string" && o.agentTrace.length) row.agentTrace = o.agentTrace;
+    if (typeof o.agentToolCount === "number" && Number.isFinite(o.agentToolCount) && o.agentToolCount >= 0) {
+      row.agentToolCount = o.agentToolCount;
+    }
     const um = o.usageMeta;
     if (um && typeof um === "object") {
       const u = /** @type {Record<string, unknown>} */ (um);
@@ -616,6 +646,29 @@
       }
       if (list.length) {
         row.displayAttachments = list;
+      }
+    }
+    if (Array.isArray(o.agentTtsClips)) {
+      const maxClips = 8;
+      const maxLen = 6000000;
+      /** @type {{ dataUrl: string }[]} */
+      const clips = [];
+      for (const raw of o.agentTtsClips) {
+        if (clips.length >= maxClips) {
+          break;
+        }
+        if (!raw || typeof raw !== "object") {
+          continue;
+        }
+        const x = /** @type {Record<string, unknown>} */ (raw);
+        const du = typeof x.dataUrl === "string" ? x.dataUrl : "";
+        if (!du.startsWith("data:audio/") || du.length > maxLen) {
+          continue;
+        }
+        clips.push({ dataUrl: du });
+      }
+      if (clips.length) {
+        row.agentTtsClips = clips;
       }
     }
     if (!(row.displayAttachments && row.displayAttachments.length)) {
@@ -782,8 +835,26 @@
       tr.textContent = m.agentTrace;
       div.appendChild(tr);
     }
+    if (r === "assistant" && m.agentTtsClips && m.agentTtsClips.length) {
+      const wrap = document.createElement("div");
+      wrap.className = "msg-tts-clips";
+      for (const c of m.agentTtsClips) {
+        if (typeof c.dataUrl !== "string" || !c.dataUrl.startsWith("data:")) {
+          continue;
+        }
+        const aud = document.createElement("audio");
+        aud.controls = true;
+        aud.preload = "none";
+        aud.src = c.dataUrl;
+        aud.setAttribute("aria-label", "Agent text-to-speech");
+        wrap.appendChild(aud);
+      }
+      if (wrap.childElementCount) {
+        div.appendChild(wrap);
+      }
+    }
     if (r === "assistant" && m.usageMeta) {
-      div.appendChild(usageFooterEl(m.usageMeta));
+      div.appendChild(usageFooterEl(m.usageMeta, m.agentToolCount));
     }
     return div;
   }
@@ -871,15 +942,52 @@
           usage: usageRaw,
         })
       : undefined;
+    const ttsClips = collectAgentTtsClips(po.steps);
+    const agentToolCount = countAgentToolRuns(po.steps);
     history.push({
       role: "assistant",
       source: "scheduler",
       atMs: Date.now(),
       content: "[Scheduled: " + title + "]\n\n" + body,
       ...(trace ? { agentTrace: trace } : {}),
+      ...(ttsClips.length ? { agentTtsClips: ttsClips } : {}),
       ...(usageMeta ? { usageMeta } : {}),
+      agentToolCount,
     });
     if (!silent) render();
+  }
+
+  function countAgentToolRuns(steps) {
+    if (!Array.isArray(steps)) return 0;
+    let n = 0;
+    for (const s of steps) {
+      if (!s || typeof s !== "object") continue;
+      if (s.status !== "done") continue;
+      const k = s.kind;
+      if (k === "web_search" || k === "schedule_job" || k === "stt" || k === "tts") {
+        n += 1;
+      }
+    }
+    return n;
+  }
+
+  function collectAgentTtsClips(steps) {
+    /** @type {{ dataUrl: string }[]} */
+    const out = [];
+    if (!Array.isArray(steps)) return out;
+    for (const s of steps) {
+      if (
+        s &&
+        typeof s === "object" &&
+        s.kind === "tts" &&
+        s.status === "done" &&
+        typeof s.dataUrl === "string" &&
+        s.dataUrl.startsWith("data:audio/")
+      ) {
+        out.push({ dataUrl: s.dataUrl });
+      }
+    }
+    return out;
   }
 
   /** @param {unknown} steps */
@@ -913,6 +1021,16 @@
         bits.push(line);
         continue;
       }
+      if (s && typeof s === "object" && s.kind === "tts" && s.status === "done") {
+        const ok = /** @type {{ ok?: boolean }} */ (s).ok !== false;
+        const sec = typeof s.duration_seconds === "number" ? s.duration_seconds : null;
+        const err = typeof s.error === "string" ? s.error : "";
+        let line = "tts" + (ok ? " ✓" : " ✗");
+        if (ok && sec != null) line += " · " + sec + "s";
+        else if (!ok && err) line += "\n  " + err;
+        bits.push(line);
+        continue;
+      }
       if (
         s &&
         typeof s === "object" &&
@@ -942,7 +1060,7 @@
         bits.push(line + (pv ? "\n  " + pv : ""));
       }
     }
-    return bits.join(" · ");
+    return bits.join("\n\n");
   }
 
   /** Re-run agent for current transcript when last row is `user` (new send or Retry). */
@@ -994,6 +1112,17 @@
           if (
             step &&
             typeof step === "object" &&
+            step.kind === "tts" &&
+            step.status === "start"
+          ) {
+            const pv = typeof step.preview === "string" ? step.preview : "";
+            pend.setAnswerSearchBanner(
+              "tts: " + (pv.length > 100 ? pv.slice(0, 100) + "…" : pv || "synthesizing…"),
+            );
+          }
+          if (
+            step &&
+            typeof step === "object" &&
             step.kind === "web_search" &&
             step.status === "start" &&
             typeof step.query === "string"
@@ -1033,6 +1162,8 @@
       pend.remove();
 
       const trace = formatAgentSteps(res.steps);
+      const ttsClips = collectAgentTtsClips(res.steps);
+      const agentToolCount = countAgentToolRuns(res.steps);
 
       /** @type {Record<string, unknown>|null} */
       const usageForMeta =
@@ -1054,7 +1185,9 @@
         content: res.text || "",
         ...(streamedReasoningAcc.trim() ? { reasoning: streamedReasoningAcc } : {}),
         ...(trace ? { agentTrace: trace } : {}),
+        ...(ttsClips.length ? { agentTtsClips: ttsClips } : {}),
         ...(usageMeta ? { usageMeta } : {}),
+        agentToolCount,
       });
       lastTurnStagedAudio = null;
     } catch (err) {

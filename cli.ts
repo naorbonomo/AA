@@ -11,6 +11,7 @@ import { initializeSecretsStore } from "./services/secrets-store.js";
 import { initializeSettingsStore, getSettingsFilePath } from "./services/settings-store.js";
 import { initializeChatHistoryStore } from "./services/chat-history-store.js";
 import { runChatWithWebSearchFromSettings, type AgentStepPayload } from "./services/agent-runner.js";
+import { setTtsCacheDir } from "./services/tts-transformers.js";
 import { setWhisperCacheDir } from "./services/whisper-transformers.js";
 import { getLogger } from "./utils/logger.js";
 
@@ -113,6 +114,12 @@ function formatAgentStep(p: AgentStepPayload): string {
         return `[stt] ${p.file_name}`;
       }
       return `[stt] ${p.file_name} ok=${p.ok}`;
+    case "tts":
+      if (p.status === "start") {
+        const prev = "preview" in p && typeof p.preview === "string" ? p.preview : "";
+        return `[tts] ${prev || "…"}`;
+      }
+      return `[tts] ok=${p.ok}${"duration_seconds" in p && typeof p.duration_seconds === "number" ? ` ${p.duration_seconds}s` : ""}`;
     default:
       return JSON.stringify(p);
   }
@@ -201,6 +208,7 @@ export async function runCli(argv: string[]): Promise<void> {
   initializeSecretsStore({ userDataDir: ud });
   initializeChatHistoryStore({ userDataDir: ud });
   setWhisperCacheDir(path.join(ud, "whisper-models"));
+  setTtsCacheDir(path.join(ud, "tts-models"));
 
   log.info("cli userData", ud);
   log.info("settings", getSettingsFilePath());

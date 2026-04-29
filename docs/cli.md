@@ -22,6 +22,7 @@ CLI reads **`aa-user-settings.json`** and **`.env`** inside one directory (creat
 Point `AA_USER_DATA` at Electron `userData` folder if you want one shared config with desktop.
 
 Whisper model cache: `<userData>/whisper-models`.
+TTS model cache: `<userData>/tts-models` (local VITS when agent uses `tts` tool).
 
 ## Global options
 

@@ -49,6 +49,7 @@ import {
   type UpdateScheduledJobPatch,
 } from "../../services/scheduler-store.js";
 import { runScheduledJobNow, startSchedulerEngine } from "../../services/scheduler-engine.js";
+import { setTtsCacheDir } from "../../services/tts-transformers.js";
 import { setWhisperCacheDir, transcribePcm } from "../../services/whisper-transformers.js";
 
 const log = getLogger("electron-main");
@@ -359,7 +360,7 @@ ipcMain.handle("scheduler:runNow", async (_e, id: unknown) => {
 });
 
 /**
- * Agent turn with `web_search` + `schedule_job` + `stt` tools.
+ * Agent turn with `web_search` + `schedule_job` + `stt` + `tts` tools.
  * Sends `agent:step` for each tool step, `agent:stream-delta` for token/reasoning deltas. Returns `{ ok, text, steps, usage }`.
  */
 ipcMain.handle("agent:chat", async (event, raw: unknown) => {
@@ -646,6 +647,7 @@ app.whenReady().then(() => {
   initializeChatHistoryStore({ userDataDir: ud });
   initializeSchedulerStore({ userDataDir: ud });
   setWhisperCacheDir(path.join(ud, "whisper-models"));
+  setTtsCacheDir(path.join(ud, "tts-models"));
   log.info("userData", ud);
   log.info("settings file", getSettingsFilePath());
   log.info("scheduler jobs file", getSchedulerJobsFilePath());

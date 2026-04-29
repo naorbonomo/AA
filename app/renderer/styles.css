@@ -1183,6 +1183,20 @@ body {
   white-space: pre-wrap;
 }
 
+.msg-tts-clips {
+  margin-top: 0.55vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4vh;
+  max-width: 100%;
+}
+
+.msg-tts-clips audio {
+  width: 100%;
+  max-width: min(100%, 22rem);
+  min-height: 2.25rem;
+}
+
 .msg-usage {
   margin-top: 0.85vh;
   padding-top: 0.65vh;

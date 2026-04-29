@@ -6,6 +6,110 @@ import { getLogger } from "../utils/logger.js";
 
 const log = getLogger("llm");
 
+/** Undici/node often throws `TypeError: fetch failed`; real errno/message live on chained `.cause`. */
+function formatFetchFailure(e: unknown, ctx: { url: string; bodyBytes?: number }): string {
+  const bits: string[] = [];
+  let cur: unknown = e;
+  let depth = 0;
+  while (cur && depth < 6) {
+    if (cur instanceof Error) {
+      const msg = cur.message.trim();
+      if (msg && !bits.includes(msg)) bits.push(msg);
+      cur = (cur as Error & { cause?: unknown }).cause;
+    } else {
+      const s = String(cur).trim();
+      if (s && !bits.includes(s)) bits.push(s);
+      break;
+    }
+    depth += 1;
+  }
+  const head = bits.length ? bits.join(" · ") : "unknown error";
+  const b = ctx.bodyBytes !== undefined ? ` · ${ctx.bodyBytes} byte body` : "";
+  return `LLM fetch: ${head}${b} · ${ctx.url}`;
+}
+
+/** POST retries when remote drops TCP (LM Studio etc.); skips HTTP 4xx/5xx and user abort. */
+const LLM_TRANSPORT_RETRY_ATTEMPTS = 3;
+const LLM_TRANSPORT_RETRY_BASE_MS = 500;
+
+function isAbortError(e: unknown): boolean {
+  let cur: unknown = e;
+  for (let d = 0; cur && d < 8; d += 1) {
+    if (cur instanceof Error) {
+      if (cur.name === "AbortError") return true;
+      const m = cur.message.toLowerCase();
+      if (m.includes("aborted") || m.includes("the user aborted")) return true;
+      cur = (cur as Error & { cause?: unknown }).cause;
+    } else {
+      break;
+    }
+  }
+  return false;
+}
+
+function isRetriableTransportError(e: unknown): boolean {
+  if (isAbortError(e)) return false;
+  const codes = new Set([
+    "ECONNRESET",
+    "ECONNREFUSED",
+    "EPIPE",
+    "ETIMEDOUT",
+    "ENOTFOUND",
+    "EAI_AGAIN",
+    "ECONNABORTED",
+  ]);
+  let cur: unknown = e;
+  for (let depth = 0; cur && depth < 8; depth += 1) {
+    if (cur instanceof Error) {
+      const ne = cur as NodeJS.ErrnoException;
+      if (typeof ne.code === "string" && codes.has(ne.code)) return true;
+      const low = cur.message.toLowerCase();
+      if (
+        low.includes("econnreset") ||
+        low.includes("econnrefused") ||
+        low.includes("socket hang up") ||
+        low.includes("epipe") ||
+        low.includes("etimedout") ||
+        low.includes("enotfound") ||
+        low.includes("eai_again") ||
+        low.includes("network connection lost")
+      ) {
+        return true;
+      }
+      cur = (cur as Error & { cause?: unknown }).cause;
+    } else {
+      break;
+    }
+  }
+  return false;
+}
+
+async function fetchPostWithTransportRetry(
+  url: string,
+  initBase: { method: "POST"; headers: Record<string, string>; body: string },
+  ctx: { bodyBytes: number; label: string; signal?: AbortSignal; timeoutMs: number },
+): Promise<Response> {
+  for (let attempt = 1; attempt <= LLM_TRANSPORT_RETRY_ATTEMPTS; attempt += 1) {
+    if (ctx.signal?.aborted) {
+      throw new Error("LLM request aborted");
+    }
+    const signal = ctx.signal ?? AbortSignal.timeout(ctx.timeoutMs);
+    try {
+      return await fetch(url, { ...initBase, signal });
+    } catch (e) {
+      const detail = formatFetchFailure(e, { url, bodyBytes: ctx.bodyBytes });
+      if (!isRetriableTransportError(e) || attempt >= LLM_TRANSPORT_RETRY_ATTEMPTS) {
+        log.error(ctx.label, detail);
+        throw new Error(detail);
+      }
+      const wait = LLM_TRANSPORT_RETRY_BASE_MS * attempt;
+      log.warn(`${ctx.label} transport retry ${attempt}/${LLM_TRANSPORT_RETRY_ATTEMPTS} in ${wait}ms`, detail);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw new Error("LLM fetch: retry exhausted (unreachable)");
+}
+
 /** Cerebras `gpt-oss-*`: match public curl (`max_tokens`, `top_p`, `reasoning_effort`). Temperature stays from resolved settings. */
 function cerebrasChatExtras(provider: string, model: string): Record<string, unknown> {
   if (provider !== "cerebras") return {};
@@ -229,12 +333,12 @@ export async function chatCompletion(args: ChatCompletionArgs): Promise<string> 
     authBearer: Boolean(key),
   });
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(bodyPayload),
-    signal: AbortSignal.timeout(s.llm.httpTimeoutMs),
-  });
+  const bodyStr = JSON.stringify(bodyPayload);
+  const res = await fetchPostWithTransportRetry(
+    url,
+    { method: "POST", headers, body: bodyStr },
+    { bodyBytes: bodyStr.length, label: "chatCompletion", timeoutMs: s.llm.httpTimeoutMs },
+  );
 
   const elapsed = Date.now() - started;
   const raw = await res.text();
@@ -348,12 +452,12 @@ export async function completionPost(params: {
     authBearer: Boolean(key),
   });
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(bodyPayload),
-    signal: AbortSignal.timeout(s.llm.httpTimeoutMs),
-  });
+  const bodyStr = JSON.stringify(bodyPayload);
+  const res = await fetchPostWithTransportRetry(
+    url,
+    { method: "POST", headers, body: bodyStr },
+    { bodyBytes: bodyStr.length, label: "completionPost", timeoutMs: s.llm.httpTimeoutMs },
+  );
   const raw = await res.text();
   if (!res.ok) {
     log.error(`HTTP ${res.status}`, raw.slice(0, 800));
@@ -465,12 +569,17 @@ export async function streamCompletionPost(params: {
     authBearer: Boolean(key),
   });
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(bodyPayload),
-    signal: params.signal ?? AbortSignal.timeout(s.llm.httpTimeoutMs),
-  });
+  const bodyStr = JSON.stringify(bodyPayload);
+  const res = await fetchPostWithTransportRetry(
+    url,
+    { method: "POST", headers, body: bodyStr },
+    {
+      bodyBytes: bodyStr.length,
+      label: "streamCompletionPost",
+      signal: params.signal,
+      timeoutMs: s.llm.httpTimeoutMs,
+    },
+  );
 
   if (!res.ok) {
     const raw = await res.text();
@@ -727,12 +836,17 @@ export async function streamChatCompletion(
     authBearer: Boolean(key),
   });
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(bodyPayload),
-    signal: signal ?? AbortSignal.timeout(s.llm.httpTimeoutMs),
-  });
+  const bodyStr = JSON.stringify(bodyPayload);
+  const res = await fetchPostWithTransportRetry(
+    url,
+    { method: "POST", headers, body: bodyStr },
+    {
+      bodyBytes: bodyStr.length,
+      label: "streamChatCompletion",
+      signal,
+      timeoutMs: s.llm.httpTimeoutMs,
+    },
+  );
 
   if (!res.ok) {
     const raw = await res.text();

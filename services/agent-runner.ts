@@ -1,11 +1,12 @@
-/** Agent loop: `web_search` + `schedule_job` + `stt` + follow-up completions (main process). */
+/** Agent loop: `web_search` + `schedule_job` + `stt` + `tts` + follow-up completions (main process). */
 
 import { resolveAgentSystemContent } from "../config/system_prompts.js";
 import type { ResolvedAgent } from "../config/user-settings.js";
 import type { ChatMessage, ChatUsageSnapshot, CompletionApiMessage, StreamDelta } from "./llm.js";
 import { normalizeAssistantContent, streamCompletionPost, completionUserMessage } from "./llm.js";
 import { executeScheduleJobTool, scheduleJobOpenAiTool } from "./schedule-job-tool.js";
-import { webSearch, webSearchOpenAiTool } from "./web-search.js";
+import { webSearch, webSearchOpenAiTool, shrinkWebSearchForToolMessage } from "./web-search.js";
+import { executeTtsTool, ttsOpenAiTool } from "./tts-tool.js";
 import {
   executeSttTool,
   sttOpenAiTool,
@@ -39,6 +40,16 @@ export type AgentStepPayload =
       /** Short head of transcript for trace. */
       preview?: string;
       error?: string;
+    }
+  | { kind: "tts"; status: "start"; preview?: string }
+  | {
+      kind: "tts";
+      status: "done";
+      ok: boolean;
+      duration_seconds?: number;
+      error?: string;
+      /** WAV data URL for UI playback only (not in LLM tool JSON). */
+      dataUrl?: string;
     };
 
 function mergeUsage(acc: ChatUsageSnapshot | undefined, next: ChatUsageSnapshot | undefined): ChatUsageSnapshot | undefined {
@@ -77,7 +88,7 @@ function parseToolArgs(raw: string | undefined): { query?: string; max_results?:
 }
 
 /**
- * Tool loop: `web_search` + `schedule_job` + `stt`; streamed completions until assistant returns text or rounds exhausted.
+ * Tool loop: `web_search` + `schedule_job` + `stt` + `tts`; streamed completions until assistant returns text or rounds exhausted.
  */
 export async function runChatWithWebSearchTool(opts: {
   history: ChatMessage[];
@@ -121,7 +132,7 @@ export async function runChatWithWebSearchTool(opts: {
     log.info("agent round", { round });
     const streamed = await streamCompletionPost({
       messages: msgs,
-      tools: [webSearchOpenAiTool, scheduleJobOpenAiTool, sttOpenAiTool],
+      tools: [webSearchOpenAiTool, scheduleJobOpenAiTool, sttOpenAiTool, ttsOpenAiTool],
       tool_choice: "auto",
       onDelta: opts.onStreamDelta,
     });
@@ -146,6 +157,40 @@ export async function runChatWithWebSearchTool(opts: {
       const id = typeof call.id === "string" ? call.id : "";
       const name = call.function?.name?.trim() ?? "";
       const rawArgs = typeof call.function?.arguments === "string" ? call.function.arguments : "{}";
+      if (name === "tts") {
+        let preview = "";
+        try {
+          const pa = JSON.parse(rawArgs) as { text?: string };
+          if (typeof pa.text === "string") {
+            const t = pa.text.replace(/\s+/g, " ").trim();
+            preview = t.length > 80 ? `${t.slice(0, 80)}…` : t;
+          }
+        } catch {
+          /* keep */
+        }
+        const stTts0: AgentStepPayload = { kind: "tts", status: "start", preview: preview || undefined };
+        opts.onStep?.(stTts0);
+        stepsOut.push(stTts0);
+
+        const ttsResult = await executeTtsTool(rawArgs);
+        const ok = ttsResult.llm.ok === true;
+        const stepTtsDone: AgentStepPayload = {
+          kind: "tts",
+          status: "done",
+          ok,
+          ...(ok && "duration_seconds" in ttsResult.llm
+            ? { duration_seconds: ttsResult.llm.duration_seconds }
+            : {}),
+          ...(!ok && "error" in ttsResult.llm ? { error: ttsResult.llm.error } : {}),
+          ...(ttsResult.ui?.dataUrl ? { dataUrl: ttsResult.ui.dataUrl } : {}),
+        };
+        opts.onStep?.(stepTtsDone);
+        stepsOut.push(stepTtsDone);
+        log.info("agent tts tool", { round, ok });
+        msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(ttsResult.llm) });
+        continue;
+      }
+
       if (name === "stt") {
         const st0: AgentStepPayload = { kind: "stt", status: "start", file_name: "" };
         try {
@@ -300,7 +345,11 @@ export async function runChatWithWebSearchTool(opts: {
       opts.onStep?.(done);
       stepsOut.push(done);
 
-      msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(result) });
+      msgs.push({
+        role: "tool",
+        tool_call_id: id,
+        content: JSON.stringify(shrinkWebSearchForToolMessage(result)),
+      });
     }
   }
 
