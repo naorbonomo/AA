@@ -60,6 +60,11 @@ function aaRoot(): string {
   return path.resolve(__electronDir, "..", "..", "..");
 }
 
+/** PNG for BrowserWindow + Dock — Electron NativeImage does not reliably load `.icns` from disk here; keep `app-icon.icns` for packaged `.app` / electron-builder. */
+function appIconPath(): string {
+  return path.join(aaRoot(), "resources", "app-icon.png");
+}
+
 function rendererHtmlPath(): string {
   return path.join(aaRoot(), "app", "renderer", "chat.html");
 }
@@ -76,6 +81,7 @@ function createWindow(): void {
     width: 960,
     height: 820,
     backgroundColor: "#0a0a0c",
+    icon: appIconPath(),
     webPreferences: {
       preload: path.join(aaRoot(), "app", "electron", "preload.cjs"),
       contextIsolation: true,
@@ -652,6 +658,10 @@ app.whenReady().then(() => {
   log.info("settings file", getSettingsFilePath());
   log.info("scheduler jobs file", getSchedulerJobsFilePath());
   startSchedulerEngine();
+
+  if (process.platform === "darwin") {
+    app.dock.setIcon(appIconPath());
+  }
 
   createWindow();
 });
