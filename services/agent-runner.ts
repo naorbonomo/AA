@@ -1,4 +1,4 @@
-/** Agent loop: `web_search` + `schedule_job` + `stt` + `tts` + follow-up completions (main process). */
+/** Agent loop: `web_search` + `schedule_job` + `stt` + `tts` + `youtube_transcribe` + follow-up completions (main process). */
 
 import { resolveAgentSystemContent } from "../config/system_prompts.js";
 import type { ResolvedAgent } from "../config/user-settings.js";
@@ -12,6 +12,10 @@ import {
   sttOpenAiTool,
   type StagedAudioClip,
 } from "./whisper-transcribe-tool.js";
+import {
+  executeYoutubeTranscribeTool,
+  youtubeTranscribeOpenAiTool,
+} from "./youtube-transcribe-tool.js";
 import { getResolvedSettings } from "./settings-store.js";
 import { getLogger, logToolInfo } from "../utils/logger.js";
 
@@ -50,6 +54,17 @@ export type AgentStepPayload =
       error?: string;
       /** WAV data URL for UI playback only (not in LLM tool JSON). */
       dataUrl?: string;
+    }
+  | { kind: "youtube_transcribe"; status: "start"; url: string; transcript_source: string }
+  | {
+      kind: "youtube_transcribe";
+      status: "done";
+      url: string;
+      transcript_source: string;
+      ok: boolean;
+      backend?: string;
+      preview?: string;
+      error?: string;
     };
 
 function mergeUsage(acc: ChatUsageSnapshot | undefined, next: ChatUsageSnapshot | undefined): ChatUsageSnapshot | undefined {
@@ -88,7 +103,7 @@ function parseToolArgs(raw: string | undefined): { query?: string; max_results?:
 }
 
 /**
- * Tool loop: `web_search` + `schedule_job` + `stt` + `tts`; streamed completions until assistant returns text or rounds exhausted.
+ * Tool loop: `web_search` + `schedule_job` + `stt` + `tts` + `youtube_transcribe`; streamed completions until assistant returns text or rounds exhausted.
  */
 export async function runChatWithWebSearchTool(opts: {
   history: ChatMessage[];
@@ -134,7 +149,13 @@ export async function runChatWithWebSearchTool(opts: {
     logToolInfo("agent", "round", { round });
     const streamed = await streamCompletionPost({
       messages: msgs,
-      tools: [webSearchOpenAiTool, scheduleJobOpenAiTool, sttOpenAiTool, ttsOpenAiTool],
+      tools: [
+        webSearchOpenAiTool,
+        scheduleJobOpenAiTool,
+        sttOpenAiTool,
+        ttsOpenAiTool,
+        youtubeTranscribeOpenAiTool,
+      ],
       tool_choice: "auto",
       onDelta: opts.onStreamDelta,
     });
@@ -190,6 +211,66 @@ export async function runChatWithWebSearchTool(opts: {
         stepsOut.push(stepTtsDone);
         logToolInfo("tts", "done", { round, ok });
         msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(ttsResult.llm) });
+        continue;
+      }
+
+      if (name === "youtube_transcribe") {
+        let yUrl = "";
+        let yMode = "auto";
+        try {
+          const pa = JSON.parse(rawArgs) as { url?: string; transcript_source?: string };
+          if (typeof pa.url === "string") {
+            yUrl = pa.url.trim();
+          }
+          if (pa.transcript_source === "youtube" || pa.transcript_source === "whisper" || pa.transcript_source === "auto") {
+            yMode = pa.transcript_source;
+          }
+        } catch {
+          /* keep */
+        }
+        const stYt0: AgentStepPayload = {
+          kind: "youtube_transcribe",
+          status: "start",
+          url: yUrl,
+          transcript_source: yMode,
+        };
+        opts.onStep?.(stYt0);
+        stepsOut.push(stYt0);
+
+        const ytResult = await executeYoutubeTranscribeTool({
+          rawArgs,
+          whisper: whisperResolved,
+        });
+        const yOk = ytResult.ok === true;
+        let yPreview: string | undefined;
+        let yBackend: string | undefined;
+        let yErr: string | undefined;
+        if (yOk && "text" in ytResult) {
+          const t = ytResult.text.replace(/\s+/g, " ").trim();
+          yPreview = t.length > 160 ? `${t.slice(0, 160)}…` : t;
+          yBackend = ytResult.backend;
+        } else if (!yOk && "error" in ytResult) {
+          yErr = ytResult.error;
+        }
+        const stepYtDone: AgentStepPayload = {
+          kind: "youtube_transcribe",
+          status: "done",
+          url: yUrl || "?",
+          transcript_source:
+            ytResult.ok === false && ytResult.transcript_source
+              ? ytResult.transcript_source
+              : ytResult.ok && "transcript_source" in ytResult
+                ? ytResult.transcript_source
+                : yMode,
+          ok: yOk,
+          ...(yBackend ? { backend: yBackend } : {}),
+          ...(yPreview ? { preview: yPreview } : {}),
+          ...(yErr ? { error: yErr } : {}),
+        };
+        opts.onStep?.(stepYtDone);
+        stepsOut.push(stepYtDone);
+        logToolInfo("youtube_transcribe", "done", { round, ok: yOk, mode: yMode });
+        msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(ytResult) });
         continue;
       }
 

@@ -71,7 +71,7 @@ contextBridge.exposeInMainWorld("aaDesktop", {
   webSearch(payload) {
     return ipcRenderer.invoke("tools:webSearch", payload);
   },
-  /** Agent with `web_search` tool; `onStep({ kind, status, ... })`, optional `onStreamDelta({ reasoning?, content? })`. */
+  /** Agent loop (web_search, schedule_job, stt, tts, youtube_transcribe); `onStep({ kind, status, ... })`, optional `onStreamDelta({ reasoning?, content? })`. */
   schedulerList() {
     return ipcRenderer.invoke("scheduler:list");
   },

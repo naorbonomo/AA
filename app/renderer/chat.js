@@ -1040,7 +1040,7 @@
       if (!s || typeof s !== "object") continue;
       if (s.status !== "done") continue;
       const k = s.kind;
-      if (k === "web_search" || k === "schedule_job" || k === "stt" || k === "tts") {
+      if (k === "web_search" || k === "schedule_job" || k === "stt" || k === "tts" || k === "youtube_transcribe") {
         n += 1;
       }
     }
@@ -1076,6 +1076,31 @@
         const ok = s.ok !== false;
         const sum = typeof s.summary === "string" ? s.summary : "";
         bits.push("schedule_job " + act + (ok ? " ✓" : " ✗") + (sum ? " · " + sum : ""));
+        continue;
+      }
+      if (
+        s &&
+        typeof s === "object" &&
+        s.kind === "youtube_transcribe" &&
+        s.status === "done"
+      ) {
+        const u = typeof s.url === "string" ? s.url : "?";
+        const mode = typeof s.transcript_source === "string" ? s.transcript_source : "?";
+        const ok = /** @type {{ ok?: boolean }} */ (s).ok !== false;
+        const be = typeof s.backend === "string" ? s.backend : "";
+        const pv = typeof s.preview === "string" ? s.preview : "";
+        const err = typeof s.error === "string" ? s.error : "";
+        const shortU = u.length > 52 ? u.slice(0, 52) + "…" : u;
+        let line =
+          "youtube_transcribe " +
+          mode +
+          (be ? " · " + be : "") +
+          (ok ? " ✓" : " ✗") +
+          " — " +
+          shortU;
+        if (ok && pv) line += "\n  " + pv;
+        else if (!ok && err) line += "\n  " + err;
+        bits.push(line);
         continue;
       }
       if (
@@ -1179,6 +1204,16 @@
       const res = await aa.agentChat(
         payloads,
         (step) => {
+          if (
+            step &&
+            typeof step === "object" &&
+            step.kind === "youtube_transcribe" &&
+            step.status === "start" &&
+            typeof step.url === "string"
+          ) {
+            const m = typeof step.transcript_source === "string" ? step.transcript_source : "auto";
+            pend.setAnswerSearchBanner("YouTube (" + m + "): " + step.url.slice(0, 100));
+          }
           if (
             step &&
             typeof step === "object" &&

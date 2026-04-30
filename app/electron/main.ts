@@ -385,7 +385,7 @@ ipcMain.handle("scheduler:runNow", async (_e, id: unknown) => {
 });
 
 /**
- * Agent turn with `web_search` + `schedule_job` + `stt` + `tts` tools.
+ * Agent turn with `web_search` + `schedule_job` + `stt` + `tts` + `youtube_transcribe` tools.
  * Sends `agent:step` for each tool step, `agent:stream-delta` for token/reasoning deltas. Returns `{ ok, text, steps, usage }`.
  */
 ipcMain.handle("agent:chat", async (event, raw: unknown) => {

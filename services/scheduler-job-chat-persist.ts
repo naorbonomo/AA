@@ -17,6 +17,33 @@ function formatAgentStepsForHistory(steps: unknown[] | undefined): string {
       bits.push(`schedule_job ${act}${ok ? " ✓" : " ✗"}${sum ? ` · ${sum}` : ""}`);
       continue;
     }
+    if (
+      s &&
+      typeof s === "object" &&
+      (s as AgentStepPayload).kind === "youtube_transcribe" &&
+      (s as AgentStepPayload).status === "done"
+    ) {
+      const ao = s as {
+        url?: unknown;
+        transcript_source?: unknown;
+        backend?: unknown;
+        ok?: unknown;
+        preview?: unknown;
+        error?: unknown;
+      };
+      const u = typeof ao.url === "string" ? ao.url : "?";
+      const mode = typeof ao.transcript_source === "string" ? ao.transcript_source : "?";
+      const ok = ao.ok !== false;
+      const be = typeof ao.backend === "string" ? ao.backend : "";
+      const pv = typeof ao.preview === "string" ? ao.preview : "";
+      const err = typeof ao.error === "string" ? ao.error : "";
+      const shortU = u.length > 52 ? `${u.slice(0, 52)}…` : u;
+      let line = `youtube_transcribe ${mode}${be ? ` · ${be}` : ""}${ok ? " ✓" : " ✗"} — ${shortU}`;
+      if (ok && pv) line += `\n  ${pv}`;
+      else if (!ok && err) line += `\n  ${err}`;
+      bits.push(line);
+      continue;
+    }
     if (s && typeof s === "object" && (s as AgentStepPayload).kind === "stt" && (s as AgentStepPayload).status === "done") {
       const ao = s as { file_name?: unknown; ok?: unknown; preview?: unknown; error?: unknown };
       const fn = typeof ao.file_name === "string" ? ao.file_name : "?";

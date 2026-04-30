@@ -120,6 +120,11 @@ function formatAgentStep(p: AgentStepPayload): string {
         return `[tts] ${prev || "…"}`;
       }
       return `[tts] ok=${p.ok}${"duration_seconds" in p && typeof p.duration_seconds === "number" ? ` ${p.duration_seconds}s` : ""}`;
+    case "youtube_transcribe":
+      if (p.status === "start") {
+        return `[youtube_transcribe] ${p.transcript_source} ${p.url}`;
+      }
+      return `[youtube_transcribe] ok=${p.ok} ${p.transcript_source}${"backend" in p && typeof p.backend === "string" ? ` ${p.backend}` : ""}`;
     default:
       return JSON.stringify(p);
   }
