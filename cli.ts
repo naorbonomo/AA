@@ -5,14 +5,27 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { ChatMessage } from "./services/llm.js";
-import { chatCompletion, fetchOpenAiCompatibleModelIds, streamChatCompletion } from "./services/llm.js";
+import { resolveAgentSystemContent } from "./config/system_prompts.js";
+import type { ChatMessage, CompletionApiMessage } from "./services/llm.js";
+import {
+  chatCompletion,
+  fetchOpenAiCompatibleModelIds,
+  streamChatCompletion,
+  previewChatCompletionsBody,
+  completionUserMessage,
+} from "./services/llm.js";
 import { initializeSecretsStore } from "./services/secrets-store.js";
-import { initializeSettingsStore, getSettingsFilePath } from "./services/settings-store.js";
+import { initializeSettingsStore, getSettingsFilePath, getResolvedSettings } from "./services/settings-store.js";
 import { initializeChatHistoryStore } from "./services/chat-history-store.js";
 import { runChatWithWebSearchFromSettings, type AgentStepPayload } from "./services/agent-runner.js";
+import { scheduleJobOpenAiTool } from "./services/schedule-job-tool.js";
+import { webSearchOpenAiTool } from "./services/web-search.js";
 import { setTtsCacheDir } from "./services/tts-transformers.js";
 import { setWhisperCacheDir } from "./services/whisper-transformers.js";
+import { transcribeAudioFileWithFfmpeg } from "./services/whisper-transcribe-file.js";
+import { sttOpenAiTool } from "./services/whisper-transcribe-tool.js";
+import { ttsOpenAiTool } from "./services/tts-tool.js";
+import { youtubeTranscribeOpenAiTool } from "./services/youtube-transcribe-tool.js";
 import { getLogger } from "./utils/logger.js";
 
 const log = getLogger("cli");
@@ -51,6 +64,8 @@ Commands:
   help              This text
   chat <message>    One-shot chat (no agent tools)
   agent <message>   Agent loop (web search, jobs, STT per settings)
+  whisper <path>    Decode audio with ffmpeg + run local Whisper (no LLM; tests ASR stack)
+  llm-sample        Print JSON body for first agent streamed round (offline; debug raw payload)
   models            GET /v1/models (ids only, one per line)
 
 Default user data (Ubuntu/macOS): $XDG_CONFIG_HOME/aa or ~/.config/aa
@@ -192,6 +207,70 @@ async function cmdAgent(message: string, stream: boolean, reasoningStderr: boole
   }
 }
 
+/** Offline JSON shaped like agent's first streamed `POST /v1/chat/completions` (for debugging). */
+function cmdLlmSample(): void {
+  const s = getResolvedSettings();
+  const systemBody = resolveAgentSystemContent(s.agent);
+  const sampleUser: ChatMessage = {
+    role: "user",
+    content:
+      "Example user turn with attach manifest + saved paths (illustrative).\n\n---\nAttached files (full names — call stt with file_name matching one line for audio):\n- demo.m4a (audio/mp4)\n\n---\nSaved attachment paths (on disk under app userData; survives restart; stt can use file_name from list above):\n- demo.m4a → /path/to/userData/chat-attachments/00000000-0000-4000-8000-000000000001.m4a",
+    attachmentPaths: [
+      {
+        name: "demo.m4a",
+        path: "/path/to/userData/chat-attachments/00000000-0000-4000-8000-000000000001.m4a",
+      },
+    ],
+  };
+  const messages: CompletionApiMessage[] = [
+    { role: "system", content: systemBody },
+    completionUserMessage(sampleUser, s.llm.vision === true),
+  ];
+  const tools = [
+    webSearchOpenAiTool,
+    scheduleJobOpenAiTool,
+    sttOpenAiTool,
+    ttsOpenAiTool,
+    youtubeTranscribeOpenAiTool,
+  ];
+  const body = previewChatCompletionsBody({
+    messages,
+    tools,
+    tool_choice: "auto",
+    stream: true,
+  });
+  process.stderr.write(
+    "# Sample JSON request body (first agent round, stream:true). Same shape as outbound HTTP except secrets/headers.\n",
+  );
+  process.stderr.write("# attachmentPaths exist only on in-process ChatMessage; not included in JSON below.\n");
+  process.stdout.write(`${JSON.stringify(body, null, 2)}\n`);
+}
+
+async function cmdWhisper(audioPath: string): Promise<void> {
+  const raw = (audioPath ?? "").trim();
+  if (!raw) {
+    throw new Error("whisper: need audio file path (e.g. npm run cli -- whisper ./1.opus)");
+  }
+  const p = path.resolve(raw);
+  if (!fs.existsSync(p)) {
+    throw new Error(`whisper: file not found: ${p}`);
+  }
+  process.stderr.write(`# whisper one-shot: ${p}\n`);
+  const r = await transcribeAudioFileWithFfmpeg({
+    inputPath: p,
+    whisper: getResolvedSettings().whisper,
+    onProgress: (s) => {
+      const line = JSON.stringify(s);
+      process.stderr.write(`\r# ${line.length > 140 ? `${line.slice(0, 140)}…` : line}    `);
+    },
+  });
+  process.stderr.write("\n");
+  process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+  if (!r.ok) {
+    process.exitCode = 1;
+  }
+}
+
 async function cmdModels(): Promise<void> {
   const r = await fetchOpenAiCompatibleModelIds();
   if (!r.ok) {
@@ -237,6 +316,14 @@ export async function runCli(argv: string[]): Promise<void> {
     case "models":
       await cmdModels();
       return;
+    case "llm-sample":
+      cmdLlmSample();
+      return;
+    case "whisper": {
+      const argPath = rest[0]?.trim() ? rest.join(" ").trim() : "";
+      await cmdWhisper(argPath);
+      return;
+    }
     default:
       printHelp();
       process.stderr.write(`\nUnknown command: ${cmd}\n`);

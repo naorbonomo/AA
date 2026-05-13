@@ -1,6 +1,10 @@
-/** OpenAI-function `stt`: local Whisper, staged PCM keyed by attachment file name (Smith-style name; no disk path). */
+/** OpenAI-function `stt`: local Whisper — in-memory PCM for current turn plus on-disk ffmpeg path from saved chat attachments (restarts). */
+
+import fs from "node:fs";
 
 import type { ResolvedWhisper } from "../config/user-settings.js";
+import { pathIsInsideChatAttachments } from "./chat-attachment-store.js";
+import { transcribeAudioFileInChild } from "./whisper-child.js";
 import { transcribePcm } from "./whisper-transformers.js";
 import { logToolInfo } from "../utils/logger.js";
 
@@ -9,7 +13,7 @@ export const sttOpenAiTool = {
   function: {
     name: "stt",
     description:
-      "Speech-to-text: transcribe a user-attached audio file to plain text (local Whisper). Only works for files listed in the user’s “Attached files” block this turn. Pass file_name exactly as shown (same spelling and case). Returns { ok, text } on success.",
+      "Speech-to-text: transcribe user-attached audio to plain text (local Whisper). Use file_name exactly as listed in the user ‘Attached files’ block (same spelling/case). If this turn sends no PCM, prior turns might still expose the same file_name with a saved disk path — stt resolves from ffmpeg + Whisper. Returns { ok, text }.",
     parameters: {
       type: "object",
       properties: {
@@ -63,10 +67,11 @@ function parseArgs(raw: string | undefined): {
 export async function executeSttTool(opts: {
   rawArgs: string;
   stagedByName: Map<string, StagedAudioClip>;
+  savedPathsByName?: Map<string, string>;
   whisper: ResolvedWhisper;
   onProgress?: (status: unknown) => void;
 }): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
-  const { rawArgs, stagedByName, whisper, onProgress } = opts;
+  const { rawArgs, stagedByName, savedPathsByName, whisper, onProgress } = opts;
   const { file_name, language, task } = parseArgs(rawArgs);
   const key = file_name ?? "";
   if (!key) {
@@ -74,11 +79,35 @@ export async function executeSttTool(opts: {
     return { ok: false, error: "file_name required" };
   }
   const clip = stagedByName.get(key);
+  let diskPath: string | null = null;
+  const p = savedPathsByName?.get(key)?.trim() ?? "";
+  if (p && pathIsInsideChatAttachments(p) && fs.existsSync(p)) {
+    diskPath = p;
+  }
+
+  if (diskPath) {
+    logToolInfo("stt", "child_start", { file_name: key, path_tail: diskPath.slice(-72), has_pcm: Boolean(clip) });
+    const rPath = await transcribeAudioFileInChild({
+      inputPath: diskPath,
+      whisper,
+      language: language ?? null,
+      task: task ?? "transcribe",
+    });
+    if (rPath.ok) {
+      logToolInfo("stt", "ok", { file_name: key, source: "child", chars: rPath.text.length });
+      return { ok: true, text: rPath.text };
+    }
+    logToolInfo("stt", "fail", { file_name: key, source: "child", error: rPath.error });
+    return { ok: false, error: rPath.error };
+  }
+
   if (!clip) {
     const names = [...stagedByName.keys()];
-    const hint = names.length ? ` Staged audio: ${names.join(", ")}.` : " No audio staged for this turn.";
-    logToolInfo("stt", "skip", { key, staged: names.length });
-    return { ok: false, error: `No attachment named "${key}".${hint}` };
+    const hinted = [...(savedPathsByName?.keys() ?? [])];
+    const hint = names.length ? ` Staged audio (this turn): ${names.join(", ")}.` : "";
+    const hint2 = hinted.length ? ` Known saved names: ${hinted.join(", ")}.` : "";
+    logToolInfo("stt", "skip", { key, staged: names.length, saved: hinted.length });
+    return { ok: false, error: `No attachment named "${key}".${hint}${hint2}` };
   }
   const r = await transcribePcm({
     samples: clip.samples,

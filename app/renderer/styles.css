@@ -175,6 +175,8 @@ body {
 .col-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
   padding: 0.8vh 1.4vw;
   background: var(--panel);
   border-bottom: var(--hairline) solid var(--border);
@@ -184,6 +186,35 @@ body {
   color: var(--muted);
   flex-shrink: 0;
   width: 100%;
+}
+
+.col-head__title {
+  min-width: 0;
+}
+
+.col-head__clear {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.35em 0.65em;
+  font: inherit;
+  font-size: 86%;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: transparent;
+  border: var(--hairline) solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.col-head__clear:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+
+.col-head__clear:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .messages {

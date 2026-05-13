@@ -61,6 +61,12 @@ import {
 } from "../../services/scheduler-store.js";
 import { runScheduledJobNow, startSchedulerEngine } from "../../services/scheduler-engine.js";
 import { setTtsCacheDir } from "../../services/tts-transformers.js";
+import { saveChatAttachmentCopy } from "../../services/chat-attachment-store.js";
+import {
+  decodeAudioBytesTo16kMonoFloat,
+  ffmpegAvailable,
+  MAX_CHAT_AUDIO_ATTACH_BYTES,
+} from "../../services/telegram-voice.js";
 import { setWhisperCacheDir, transcribePcm } from "../../services/whisper-transformers.js";
 
 const log = getLogger("electron-main");
@@ -210,6 +216,79 @@ function pcmPayloadToArrayBuffer(p: unknown): ArrayBuffer | null {
   }
   return null;
 }
+
+/**
+ * Renderer Web Audio often fails on WhatsApp-style Opus/Ogg; ffmpeg fallback for chat attach staging.
+ * @returns `{ ok, sampleRate, pcm: ArrayBuffer }` float32 LE mono @ 16k, or `{ ok: false, error }`.
+ */
+ipcMain.handle("audio:decodeAttachment", async (_e, raw: unknown) => {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const fileName = typeof o.fileName === "string" ? o.fileName.trim() : "";
+  const data = o.data;
+  let ab: ArrayBuffer | null = null;
+  if (data instanceof ArrayBuffer) {
+    ab = data;
+  } else if (ArrayBuffer.isView(data)) {
+    const v = data as ArrayBufferView;
+    const u = new Uint8Array(v.byteLength);
+    u.set(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+    ab = u.buffer as ArrayBuffer;
+  }
+  if (!fileName) {
+    return { ok: false as const, error: "fileName required" };
+  }
+  if (!ab || ab.byteLength === 0) {
+    return { ok: false as const, error: "data (ArrayBuffer) required" };
+  }
+  if (!ffmpegAvailable()) {
+    log.warn("audio:decodeAttachment ffmpeg missing");
+    return { ok: false as const, error: "ffmpeg not on PATH" };
+  }
+  if (ab.byteLength > MAX_CHAT_AUDIO_ATTACH_BYTES) {
+    return {
+      ok: false as const,
+      error: `attachment too large (max ${MAX_CHAT_AUDIO_ATTACH_BYTES} bytes)`,
+    };
+  }
+  const decoded = decodeAudioBytesTo16kMonoFloat(Buffer.from(ab), fileName);
+  if (!decoded) {
+    log.warn("audio:decodeAttachment decode failed", { fileName: fileName.slice(0, 120) });
+    return { ok: false as const, error: "ffmpeg could not decode this file" };
+  }
+  const { samples, sampleRate } = decoded;
+  const pcmBuf = samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength);
+  log.info("audio:decodeAttachment ok", { fileName: fileName.slice(0, 120), sampleRate, frames: samples.length });
+  return { ok: true as const, sampleRate, pcm: pcmBuf };
+});
+
+/** Persist raw attach bytes beside chat history (`chat-attachments/`); survives restarts. */
+ipcMain.handle("chat-attachment:save", async (_e, raw: unknown) => {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const fileName = typeof o.fileName === "string" ? o.fileName.trim() : "";
+  const data = o.data;
+  let ab: ArrayBuffer | null = null;
+  if (data instanceof ArrayBuffer) {
+    ab = data;
+  } else if (ArrayBuffer.isView(data)) {
+    const v = data as ArrayBufferView;
+    const u = new Uint8Array(v.byteLength);
+    u.set(new Uint8Array(v.buffer, v.byteOffset, v.byteLength));
+    ab = u.buffer as ArrayBuffer;
+  }
+  if (!fileName) {
+    return { ok: false as const, error: "fileName required" };
+  }
+  if (!ab || ab.byteLength === 0) {
+    return { ok: false as const, error: "data (ArrayBuffer) required" };
+  }
+  const r = saveChatAttachmentCopy(fileName, Buffer.from(ab));
+  if (!r.ok) {
+    log.warn("chat-attachment:save fail", { fileName: fileName.slice(0, 120), error: r.error });
+    return { ok: false as const, error: r.error };
+  }
+  log.info("chat-attachment:save ok", { fileName: fileName.slice(0, 80), bytes: ab.byteLength });
+  return { ok: true as const, path: r.path };
+});
 
 ipcMain.handle("whisper:transcribe", async (event, raw: unknown) => {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -410,7 +489,12 @@ ipcMain.handle("agent:chat", async (event, raw: unknown) => {
     if (!m || typeof m !== "object") {
       continue;
     }
-    const o = m as { role?: unknown; content?: unknown; images?: unknown };
+    const o = m as {
+      role?: unknown;
+      content?: unknown;
+      images?: unknown;
+      attachmentPaths?: unknown;
+    };
     const role = o.role === "user" ? "user" : o.role === "assistant" ? "assistant" : o.role === "system" ? "system" : null;
     if (!role || typeof o.content !== "string") {
       continue;
@@ -432,6 +516,21 @@ ipcMain.handle("agent:chat", async (event, raw: unknown) => {
       }
       if (images.length) {
         row.images = images;
+      }
+    }
+    if (role === "user" && Array.isArray(o.attachmentPaths)) {
+      const ap: { name: string; path: string }[] = [];
+      for (const it of o.attachmentPaths) {
+        if (!it || typeof it !== "object") continue;
+        const io = it as Record<string, unknown>;
+        const name = typeof io.name === "string" ? io.name.trim() : "";
+        const filepath = typeof io.path === "string" ? io.path.trim() : "";
+        if (name.length && filepath.length) {
+          ap.push({ name, path: filepath });
+        }
+      }
+      if (ap.length) {
+        row.attachmentPaths = ap;
       }
     }
     hist.push(row);

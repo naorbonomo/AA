@@ -102,6 +102,24 @@ function parseToolArgs(raw: string | undefined): { query?: string; max_results?:
   }
 }
 
+/** Latest user row with same `name` wins — STT disk fallback across turns / after restart. */
+function collectSavedPathsByName(history: ChatMessage[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const msg of history) {
+    if (msg.role !== "user" || !msg.attachmentPaths?.length) {
+      continue;
+    }
+    for (const { name, path: p } of msg.attachmentPaths) {
+      const n = typeof name === "string" ? name.trim() : "";
+      const pp = typeof p === "string" ? p.trim() : "";
+      if (n && pp) {
+        m.set(n, pp);
+      }
+    }
+  }
+  return m;
+}
+
 /**
  * Tool loop: `web_search` + `schedule_job` + `stt` + `tts` + `youtube_transcribe`; streamed completions until assistant returns text or rounds exhausted.
  */
@@ -129,6 +147,7 @@ export async function runChatWithWebSearchTool(opts: {
     opts.stagedAudioByFileName instanceof Map
       ? opts.stagedAudioByFileName
       : new Map<string, StagedAudioClip>();
+  const savedPathsByName = collectSavedPathsByName(opts.history);
   const whisperResolved = settings.whisper;
   const vision = settings.llm.vision === true;
   const systemBody = resolveAgentSystemContent(agentResolved);
@@ -291,6 +310,7 @@ export async function runChatWithWebSearchTool(opts: {
         const result = await executeSttTool({
           rawArgs: rawArgs,
           stagedByName: staged,
+          savedPathsByName,
           whisper: whisperResolved,
         });
         const ok = result.ok === true;

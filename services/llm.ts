@@ -3,8 +3,69 @@
 import { bearerTokenForLlm } from "./secrets-store.js";
 import { getResolvedSettings } from "./settings-store.js";
 import { getLogger } from "../utils/logger.js";
+import { AGENT_SYSTEM_APPENDIX_MARKER } from "../config/system_prompts.js";
 
 const log = getLogger("llm");
+
+type JsonChatMessageShape = { role?: unknown; content?: unknown };
+
+function shouldLogRawLlmBody(): boolean {
+  const v = process.env.AA_LOG_LLM_BODY?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+/** Full JSON POST body — large; enable with `AA_LOG_LLM_BODY=1`. */
+function maybeLogRawLlmBody(label: string, bodyStr: string): void {
+  if (!shouldLogRawLlmBody()) return;
+  const max = 600_000;
+  if (bodyStr.length <= max) {
+    log.info(`${label} RAW_REQUEST_JSON`, bodyStr);
+    return;
+  }
+  log.info(
+    `${label} RAW_REQUEST_JSON`,
+    `${bodyStr.slice(0, max)}…[truncated ${bodyStr.length - max} chars]`,
+  );
+}
+
+function summarizeSystemForRequestLog(messages: JsonChatMessageShape[]): {
+  firstRole: string;
+  systemIndex: number | null;
+  systemChars: number;
+  adminAppendixMarker: boolean;
+  systemHead160: string;
+  systemTail200: string;
+} {
+  let firstRole = "";
+  if (messages.length && typeof messages[0]?.role === "string") {
+    firstRole = messages[0].role;
+  }
+  let systemIndex: number | null = null;
+  let systemChars = 0;
+  let adminAppendixMarker = false;
+  let systemHead160 = "";
+  let systemTail200 = "";
+  for (let i = 0; i < messages.length; i += 1) {
+    const m = messages[i];
+    if (m.role !== "system") continue;
+    const c = m.content;
+    if (typeof c !== "string") continue;
+    systemIndex = i;
+    systemChars = c.length;
+    adminAppendixMarker = c.includes(AGENT_SYSTEM_APPENDIX_MARKER);
+    systemHead160 = c.slice(0, 160);
+    systemTail200 = c.slice(-200);
+    break;
+  }
+  return {
+    firstRole,
+    systemIndex,
+    systemChars,
+    adminAppendixMarker,
+    systemHead160,
+    systemTail200,
+  };
+}
 
 /** Undici/node often throws `TypeError: fetch failed`; real errno/message live on chained `.cause`. */
 function formatFetchFailure(e: unknown, ctx: { url: string; bodyBytes?: number }): string {
@@ -202,11 +263,16 @@ export type ChatRole = "user" | "assistant" | "system";
 /** One user-turn image for vision-capable chat models (data URL built at API boundary). */
 export type ChatImagePart = { fileName: string; mediaType: string; base64: string };
 
+/** On-disk copies of attaches (Electron); not sent verbatim to API JSON — strips before HTTP. */
+export type ChatAttachmentPath = { name: string; path: string };
+
 export type ChatMessage = {
   role: ChatRole;
   content: string;
   /** User images only; included in API when Settings → Vision is enabled. */
   images?: ChatImagePart[];
+  /** Persisted attachment paths keyed by File.name — main uses STT ffmpeg fallback across turns/restarts. */
+  attachmentPaths?: ChatAttachmentPath[];
 };
 
 export type ChatCompletionArgs = {
@@ -313,6 +379,9 @@ export async function chatCompletion(args: ChatCompletionArgs): Promise<string> 
   const s = getResolvedSettings();
   const url = `${s.llm.baseUrl}/v1/chat/completions`;
   const bodyPayload = buildOpenAiBody(args, s, false);
+  const bodyStr = JSON.stringify(bodyPayload);
+  const rq = summarizeSystemForRequestLog(bodyPayload.messages);
+
   const started = Date.now();
 
   const headers: Record<string, string> = {
@@ -331,9 +400,11 @@ export async function chatCompletion(args: ChatCompletionArgs): Promise<string> 
     temperature: bodyPayload.temperature,
     stream: bodyPayload.stream,
     authBearer: Boolean(key),
+    bodyUtf8Bytes: Buffer.byteLength(bodyStr, "utf8"),
+    ...rq,
   });
+  maybeLogRawLlmBody("chatCompletion", bodyStr);
 
-  const bodyStr = JSON.stringify(bodyPayload);
   const res = await fetchPostWithTransportRetry(
     url,
     { method: "POST", headers, body: bodyStr },
@@ -413,6 +484,33 @@ export function completionUserMessage(
   return { role: "user", content: parts };
 }
 
+/** Builds OpenAI-shape POST body offline — mirrors first agent streamed round for debugging (`cli llm-sample`). */
+export function previewChatCompletionsBody(opts: {
+  messages: CompletionApiMessage[];
+  tools?: readonly unknown[];
+  tool_choice?: "auto" | "none";
+  stream: boolean;
+  model?: string;
+  temperature?: number;
+}): Record<string, unknown> {
+  const s = getResolvedSettings();
+  const bodyPayload: Record<string, unknown> = {
+    model: opts.model ?? s.llm.model,
+    messages: opts.messages as unknown[],
+    temperature: opts.temperature ?? s.llm.temperature,
+    stream: opts.stream,
+  };
+  if (opts.stream) {
+    bodyPayload.stream_options = { include_usage: true };
+  }
+  if (opts.tools && opts.tools.length > 0) {
+    bodyPayload.tools = [...opts.tools];
+    bodyPayload.tool_choice = opts.tool_choice ?? "auto";
+  }
+  Object.assign(bodyPayload, cerebrasChatExtras(s.llm.provider, String(bodyPayload.model)));
+  return bodyPayload;
+}
+
 /** Non-streaming `/v1/chat/completions`; returns parsed JSON (tool_calls + usage when supported). */
 export async function completionPost(params: {
   messages: CompletionApiMessage[];
@@ -444,15 +542,23 @@ export async function completionPost(params: {
     headers.Authorization = `Bearer ${key}`;
   }
 
+  const bodyStr = JSON.stringify(bodyPayload);
+  const rq = summarizeSystemForRequestLog(bodyPayload.messages as JsonChatMessageShape[]);
+
   log.info("POST /v1/chat/completions (tools)", {
     url,
     model: bodyPayload.model,
     toolCount: params.tools?.length ?? 0,
     messageLen: params.messages.length,
     authBearer: Boolean(key),
+    bodyUtf8Bytes: Buffer.byteLength(bodyStr, "utf8"),
+    ...rq,
   });
+  maybeLogRawLlmBody("completionPost", bodyStr);
+  if ((params.tools?.length ?? 0) > 0 && rq.systemIndex === null) {
+    log.warn("completionPost: tool request has no string system message in JSON body");
+  }
 
-  const bodyStr = JSON.stringify(bodyPayload);
   const res = await fetchPostWithTransportRetry(
     url,
     { method: "POST", headers, body: bodyStr },
@@ -561,15 +667,22 @@ export async function streamCompletionPost(params: {
   }
 
   const started = Date.now();
+  const bodyStr = JSON.stringify(bodyPayload);
+  const rq = summarizeSystemForRequestLog(params.messages as JsonChatMessageShape[]);
   log.info("POST /v1/chat/completions (tools+stream)", {
     url,
     model: bodyPayload.model,
     toolCount: params.tools?.length ?? 0,
     messageLen: params.messages.length,
     authBearer: Boolean(key),
+    bodyUtf8Bytes: Buffer.byteLength(bodyStr, "utf8"),
+    ...rq,
   });
+  maybeLogRawLlmBody("streamCompletionPost", bodyStr);
+  if ((params.tools?.length ?? 0) > 0 && rq.systemIndex === null) {
+    log.warn("streamCompletionPost: tool request has no string system message in JSON body");
+  }
 
-  const bodyStr = JSON.stringify(bodyPayload);
   const res = await fetchPostWithTransportRetry(
     url,
     { method: "POST", headers, body: bodyStr },
@@ -814,6 +927,8 @@ export async function streamChatCompletion(
   const s = getResolvedSettings();
   const url = `${s.llm.baseUrl}/v1/chat/completions`;
   const bodyPayload = buildOpenAiBody(args, s, true);
+  const bodyStr = JSON.stringify(bodyPayload);
+  const rq = summarizeSystemForRequestLog(bodyPayload.messages);
   const started = Date.now();
   let lastUsage: ChatUsageSnapshot | undefined;
   let lastFingerprint: string | undefined;
@@ -834,9 +949,11 @@ export async function streamChatCompletion(
     temperature: bodyPayload.temperature,
     stream: bodyPayload.stream,
     authBearer: Boolean(key),
+    bodyUtf8Bytes: Buffer.byteLength(bodyStr, "utf8"),
+    ...rq,
   });
+  maybeLogRawLlmBody("streamChatCompletion", bodyStr);
 
-  const bodyStr = JSON.stringify(bodyPayload);
   const res = await fetchPostWithTransportRetry(
     url,
     { method: "POST", headers, body: bodyStr },

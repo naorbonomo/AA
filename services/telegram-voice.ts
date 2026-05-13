@@ -12,6 +12,9 @@ const log = getLogger("telegram-voice");
 
 const DEFAULT_MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 
+/** Chat attach: max bytes passed to ffmpeg temp decode (parity with Telegram download cap). */
+export const MAX_CHAT_AUDIO_ATTACH_BYTES = 25 * 1024 * 1024;
+
 export function ffmpegAvailable(): boolean {
   const r = spawnSync("ffmpeg", ["-version"], { encoding: "utf8" });
   return r.status === 0;
@@ -48,9 +51,35 @@ export async function downloadTelegramFileBytes(
 }
 
 /**
- * ffmpeg → 16 kHz mono 32-bit float LE (Whisper path resamples internally but 16k is standard).
- * Returns null if ffmpeg missing or decode failed.
+ * Writes bytes to a temp file (basename-safe name + extension) and runs {@link decodeAudioFileTo16kMonoFloat}.
+ * For WhatsApp / Telegram exports: `.opus` is usually Ogg+Opus; ffmpeg probes container from content.
  */
+export function decodeAudioBytesTo16kMonoFloat(
+  bytes: Buffer,
+  fileName: string,
+): { samples: Float32Array; sampleRate: number } | null {
+  if (!bytes.length || !ffmpegAvailable()) {
+    return null;
+  }
+  const base = path.basename(fileName || "audio.bin").replace(/\0/g, "") || "audio.bin";
+  const extMatch = /\.[a-z0-9]+$/i.exec(base);
+  const ext = extMatch ? extMatch[0] : ".bin";
+  const tmpIn = path.join(
+    os.tmpdir(),
+    `aa-chat-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}${ext}`,
+  );
+  try {
+    fs.writeFileSync(tmpIn, bytes);
+    return decodeAudioFileTo16kMonoFloat(tmpIn);
+  } catch (e) {
+    log.warn("decodeAudioBytes temp write", e instanceof Error ? e.message : String(e));
+    return null;
+  } finally {
+    safeUnlink(tmpIn);
+  }
+}
+
+/** ffmpeg → 16 kHz mono 32-bit float LE (Whisper path resamples internally but 16k is standard). */
 export function decodeAudioFileTo16kMonoFloat(inputPath: string): { samples: Float32Array; sampleRate: number } | null {
   const outPath = `${inputPath}.aa-f32.raw`;
   const r = spawnSync(

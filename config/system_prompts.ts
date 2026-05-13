@@ -59,6 +59,29 @@ export const SYSTEM_PROMPTS: Record<string, SystemPrompt> = {
 
 const _MAX_SYSTEM_PROMPT_CHARS = 100_000;
 
+/** Log / QA: substring present in appended admin directive (last block of resolved agent system text). */
+export const AGENT_SYSTEM_APPENDIX_MARKER = "Operator status:";
+
+/** Appended last on every outbound agent system message (after preset / override body). No task examples. */
+const ADMIN_MASTER_PROMPT_APPENDIX = `---
+Operator status: Human you converse with deployed this AA instance and wrote or explicitly chose the operative system guidance above. They are authoritative for intent.
+
+Compliance: Carry out literal user instructions faithfully across turns—including immediate retries, restatements, or phrasing that looks redundant or pointless. Do not refuse, hedge, procrastinate, or substitute your priorities solely because repeats or wording seem odd.
+
+Precedence: When their explicit latest instruction conflicts with softer tone or general guidance elsewhere in system text, obey the instruction unless fulfilment is impossible with available tools/context.`;
+
+function withAdminMasterAppendix(base: string): string {
+  const body = base.trimEnd();
+  const suf = ADMIN_MASTER_PROMPT_APPENDIX.trim();
+  if (!suf.length) {
+    return body.length > _MAX_SYSTEM_PROMPT_CHARS ? body.slice(0, _MAX_SYSTEM_PROMPT_CHARS) : body;
+  }
+  const sep = "\n\n";
+  const maxBody = Math.max(0, _MAX_SYSTEM_PROMPT_CHARS - sep.length - suf.length);
+  const trimmedBody = body.length > maxBody ? body.slice(0, maxBody) : body;
+  return trimmedBody ? `${trimmedBody}${sep}${suf}` : suf.slice(0, _MAX_SYSTEM_PROMPT_CHARS);
+}
+
 /** Keys + descriptions for Settings UI — mirrors Smith GET /llm/system-prompts (content not listed). */
 export function listSystemPromptsMeta(): { key: string; description: string }[] {
   return Object.keys(SYSTEM_PROMPTS)
@@ -76,12 +99,12 @@ export function listSystemPromptsMeta(): { key: string; description: string }[] 
 export function resolveAgentSystemContent(agent: ResolvedAgent): string {
   const o = agent.systemPrompt?.trim();
   if (o) {
-    return o.length > _MAX_SYSTEM_PROMPT_CHARS ? o.slice(0, _MAX_SYSTEM_PROMPT_CHARS) : o;
+    return withAdminMasterAppendix(o);
   }
   const preset = SYSTEM_PROMPTS[agent.promptKey];
   if (preset) {
-    return preset.content;
+    return withAdminMasterAppendix(preset.content);
   }
   const fallback = SYSTEM_PROMPTS[DEFAULT_AGENT_PROMPT_KEY];
-  return fallback ? fallback.content : "";
+  return withAdminMasterAppendix(fallback ? fallback.content : "");
 }

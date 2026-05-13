@@ -123,9 +123,17 @@ contextBridge.exposeInMainWorld("aaDesktop", {
     ipcRenderer.on("chat:mirror-refresh", wrapped);
     return () => ipcRenderer.removeListener("chat:mirror-refresh", wrapped);
   },
+  /** `{ fileName: string, data: ArrayBuffer }` → `{ ok, path }` — copy under userData/chat-attachments. */
+  chatAttachmentSave(payload) {
+    return ipcRenderer.invoke("chat-attachment:save", payload);
+  },
   /** `{ pcm: ArrayBuffer, sampleRate, language?, task? }` → `{ ok, text? } | { ok: false, error }`. Uses Whisper settings from disk. */
   whisperTranscribe(payload) {
     return ipcRenderer.invoke("whisper:transcribe", payload);
+  },
+  /** `{ fileName: string, data: ArrayBuffer }` → `{ ok, sampleRate, pcm }` (16k mono f32) or `{ ok: false, error }` — ffmpeg when Web Audio fails (e.g. WhatsApp Opus). */
+  audioDecodeAttachment(payload) {
+    return ipcRenderer.invoke("audio:decodeAttachment", payload);
   },
   /** @param {(p: unknown) => void} handler @returns {() => void} unsubscribe */
   onWhisperProgress(handler) {

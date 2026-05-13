@@ -11,6 +11,10 @@ export function setWhisperCacheDir(absDir: string): void {
   cacheDir = path.resolve(absDir);
 }
 
+export function getWhisperCacheDir(): string | null {
+  return cacheDir;
+}
+
 function resampleLinear(input: Float32Array, fromRate: number, toRate: number): Float32Array {
   if (fromRate === toRate || input.length === 0) {
     return fromRate === toRate ? input : new Float32Array(0);

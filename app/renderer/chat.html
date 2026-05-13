@@ -17,7 +17,18 @@
   </header>
 
   <main class="page">
-    <div class="col-head"><span id="chat-title">Chat</span></div>
+    <div class="col-head">
+      <span id="chat-title" class="col-head__title">Chat</span>
+      <button
+        type="button"
+        id="btn-clear-chat"
+        class="col-head__clear"
+        title="Clear saved chat on this device"
+        aria-label="Clear chat history"
+      >
+        Clear
+      </button>
+    </div>
     <div id="messages" class="messages" role="log" aria-live="polite"></div>
     <form id="compose" class="compose" autocomplete="off">
       <div class="compose-shell">

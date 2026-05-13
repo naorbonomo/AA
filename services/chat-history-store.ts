@@ -38,6 +38,8 @@ export type ChatHistoryAttachment = {
   name: string;
   kind: "image" | "audio" | "file";
   thumbnailDataUrl?: string;
+  /** Absolute path under userData/chat-attachments (survives restarts; STT can re-read). */
+  savedPath?: string;
 };
 
 /** Assistant message: in-memory TTS WAV as data URL (same cap as persist). */
@@ -67,6 +69,8 @@ export type ChatHistoryRow = {
 
 const MAX_ROWS = 500;
 const MAX_FIELD = 2_000_000;
+/** Max length per persisted on-disk attachment path string. */
+const MAX_SAVED_PATH_CHARS = 16_384;
 /** Max length per persisted `data:` thumbnail (~2.5 MB ASCII). */
 const MAX_THUMB_DATA_URL = 2_500_000;
 /** Max length per TTS WAV data URL (base64); drops clip if larger. */
@@ -154,6 +158,10 @@ function normalizeRow(raw: unknown): ChatHistoryRow | null {
       const thumb = ao.thumbnailDataUrl;
       if (typeof thumb === "string" && thumb.startsWith("data:") && thumb.length <= MAX_THUMB_DATA_URL) {
         att.thumbnailDataUrl = thumb;
+      }
+      const sp = ao.savedPath;
+      if (typeof sp === "string" && sp.length > 0 && sp.length <= MAX_SAVED_PATH_CHARS) {
+        att.savedPath = sp;
       }
       list.push(att);
     }

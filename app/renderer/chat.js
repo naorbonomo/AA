@@ -12,7 +12,7 @@
    * }} UsageMeta
    * msPerToken = wallMs / completion_tokens when known (footer tok/s); else wallMs / total_tokens.
    */
-  /** @typedef {{ name: string, kind: "image"|"audio"|"file", previewUrl?: string, thumbnailDataUrl?: string }} RowAttachment */
+  /** @typedef {{ name: string, kind: "image"|"audio"|"file", previewUrl?: string, thumbnailDataUrl?: string, savedPath?: string }} RowAttachment */
   /** @typedef {{ role: string, content: string, atMs?: number, reasoning?: string, usageMeta?: UsageMeta, agentTrace?: string, agentToolCount?: number, agentTtsClips?: { dataUrl: string }[], source?: "app" | "telegram" | "scheduler", telegramChatId?: number, errReply?: boolean, images?: { fileName: string, mediaType: string, base64: string }[], displayAttachments?: RowAttachment[] }} Row */
 
   const aa = window.aaDesktop;
@@ -41,6 +41,7 @@
   const elAttachFiles = document.getElementById("attach-files");
   const elBtnAttach = document.getElementById("btn-attach");
   const elAttachList = document.getElementById("attach-list");
+  const elBtnClear = document.getElementById("btn-clear-chat");
 
   const THINK_TIER_KEY = "aa.thinkingPanelTier";
 
@@ -230,6 +231,18 @@
     /** @type {RowAttachment[]} */
     const displayAttachments = [];
     for (const p of pendingAttachments) {
+      /** @type {string} */
+      let savedPath = "";
+      if (typeof aa.chatAttachmentSave === "function") {
+        try {
+          const sr = await aa.chatAttachmentSave({ fileName: p.name, data: p.ab });
+          if (sr && sr.ok === true && typeof sr.path === "string" && sr.path.length) {
+            savedPath = sr.path;
+          }
+        } catch (_) {
+          /* still list attach; path block omitted */
+        }
+      }
       lines.push("- " + p.name + " (" + p.type + ")");
       if (isProbablyImage(p.name, p.type)) {
         anyImage = true;
@@ -243,19 +256,46 @@
         if (thumb) {
           chip.thumbnailDataUrl = thumb;
         }
+        if (savedPath) {
+          chip.savedPath = savedPath;
+        }
         displayAttachments.push(chip);
       } else if (isProbablyAudio(p.name, p.type)) {
-        displayAttachments.push({ name: p.name, kind: "audio" });
+        /** @type {RowAttachment} */
+        const chip = { name: p.name, kind: "audio" };
+        if (savedPath) {
+          chip.savedPath = savedPath;
+        }
+        displayAttachments.push(chip);
       } else {
-        displayAttachments.push({ name: p.name, kind: "file" });
+        /** @type {RowAttachment} */
+        const chip = { name: p.name, kind: "file" };
+        if (savedPath) {
+          chip.savedPath = savedPath;
+        }
+        displayAttachments.push(chip);
       }
       if (isProbablyAudio(p.name, p.type) && dec && typeof dec.decodeToMonoF32 === "function") {
+        /** @type {{ name: string, sampleRate: number, pcm: ArrayBuffer } | null} */
+        let clip = null;
         try {
           const { samples, sampleRate } = await dec.decodeToMonoF32(p.ab);
           const pcm = samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength);
-          staged.push({ name: p.name, sampleRate, pcm });
+          clip = { name: p.name, sampleRate, pcm };
         } catch (_) {
-          /* listed but not staged — tool may error */
+          if (typeof aa.audioDecodeAttachment === "function") {
+            try {
+              const fb = await aa.audioDecodeAttachment({ fileName: p.name, data: p.ab });
+              if (fb && fb.ok === true && fb.pcm && fb.sampleRate > 0) {
+                clip = { name: p.name, sampleRate: fb.sampleRate, pcm: fb.pcm };
+              }
+            } catch (_) {
+              /* listed but not staged */
+            }
+          }
+        }
+        if (clip) {
+          staged.push(clip);
         }
       }
       if (vision && isProbablyImage(p.name, p.type)) {
@@ -284,7 +324,19 @@
     const block =
       "\n\n---\nAttached files (full names — call stt with file_name matching one line for audio):\n" +
       lines.join("\n");
-    const userContent = lines.length ? head + block : head;
+    /** @type {string[]} */
+    const pathLines = [];
+    for (const ch of displayAttachments) {
+      if (typeof ch.savedPath === "string" && ch.savedPath.length) {
+        pathLines.push("- " + ch.name + " → " + ch.savedPath);
+      }
+    }
+    const pathBlock =
+      pathLines.length > 0
+        ? "\n\n---\nSaved attachment paths (on disk under app userData; survives restart; stt can use file_name from list above):\n" +
+          pathLines.join("\n")
+        : "";
+    const userContent = lines.length ? head + block + pathBlock : head;
     return { userContent, staged, images, displayAttachments };
   }
 
@@ -547,6 +599,9 @@
           ) {
             x.thumbnailDataUrl = a.thumbnailDataUrl;
           }
+          if (typeof a.savedPath === "string" && a.savedPath.length) {
+            x.savedPath = a.savedPath;
+          }
           return x;
         });
       }
@@ -618,6 +673,25 @@
     );
   }
 
+  function clearChatHistory() {
+    if (agentBusy) {
+      return;
+    }
+    if (
+      !confirm(
+        "Clear saved chat on this computer? Cannot undo.\n\nIf Settings → Chat has Telegram mirror on, mirrored rows can load again after refresh.",
+      )
+    ) {
+      return;
+    }
+    pendingAttachments.length = 0;
+    renderAttachList();
+    lastTurnStagedAudio = null;
+    history.length = 0;
+    render();
+    elInput.focus();
+  }
+
   /** @param {unknown} r */
   function normalizeHistoryRow(r) {
     if (!r || typeof r !== "object") return null;
@@ -684,6 +758,9 @@
         ) {
           a.thumbnailDataUrl = x.thumbnailDataUrl;
         }
+        if (typeof x.savedPath === "string" && x.savedPath.length) {
+          a.savedPath = x.savedPath;
+        }
         list.push(a);
       }
       if (list.length) {
@@ -744,6 +821,9 @@
   }
 
   function render() {
+    if (elBtnClear instanceof HTMLButtonElement) {
+      elBtnClear.disabled = agentBusy;
+    }
     if (!history.length) {
       elMsgs.innerHTML = '<div class="empty">Send a message to talk to the local model.</div>';
       persistHistory();
@@ -1189,6 +1269,14 @@
       if (h.role === "user" && h.images && h.images.length) {
         o.images = h.images;
       }
+      if (h.role === "user" && h.displayAttachments && h.displayAttachments.length) {
+        const ap = h.displayAttachments
+          .filter((a) => typeof a.savedPath === "string" && a.savedPath.length > 0)
+          .map((a) => ({ name: a.name, path: /** @type {string} */ (a.savedPath) }));
+        if (ap.length) {
+          o.attachmentPaths = ap;
+        }
+      }
       return o;
     });
 
@@ -1363,6 +1451,12 @@
       }
     }
   });
+
+  if (elBtnClear instanceof HTMLButtonElement) {
+    elBtnClear.addEventListener("click", () => {
+      void clearChatHistory();
+    });
+  }
 
   if (elBtnAttach instanceof HTMLButtonElement && elAttachFiles instanceof HTMLInputElement) {
     elBtnAttach.addEventListener("click", () => {
