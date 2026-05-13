@@ -16,6 +16,8 @@
   const elLlTemp = document.getElementById("set-llm-temp");
   const elLlTo = document.getElementById("set-llm-timeout");
   const elLlVision = document.getElementById("set-llm-vision");
+  const elEmbModel = document.getElementById("set-embed-model");
+  const elEmbDim = document.getElementById("set-embed-vec-dim");
   const elLogFile = document.getElementById("set-log-file");
   const elLogCon = document.getElementById("set-log-console");
   const elLogTools = document.getElementById("set-log-tools");
@@ -301,6 +303,19 @@
     if (elLlVision instanceof HTMLInputElement) {
       elLlVision.checked = !!r.llm.vision;
     }
+    const emb =
+      r.embedding && typeof r.embedding === "object"
+        ? /** @type {{ model?: string, vecDimension?: number }} */ (r.embedding)
+        : {};
+    if (elEmbModel instanceof HTMLInputElement) {
+      elEmbModel.value = typeof emb.model === "string" ? emb.model : "";
+    }
+    if (elEmbDim instanceof HTMLInputElement) {
+      elEmbDim.value =
+        typeof emb.vecDimension === "number" && Number.isFinite(emb.vecDimension)
+          ? String(Math.floor(emb.vecDimension))
+          : "";
+    }
     elLogFile.checked = !!r.logging.logToFile;
     elLogCon.checked = !!r.logging.logToConsole;
     if (elLogTools instanceof HTMLInputElement) {
@@ -502,6 +517,26 @@
           : {}),
         showTelegramMirror: elChatTgMirror instanceof HTMLInputElement ? elChatTgMirror.checked : false,
       },
+      embedding: (function () {
+        /** @type {{ model: string, vecDimension: number }} */
+        const out = {
+          model: elEmbModel instanceof HTMLInputElement ? elEmbModel.value.trim() : "",
+          vecDimension:
+            lastResolvedSnap &&
+            lastResolvedSnap.embedding &&
+            typeof lastResolvedSnap.embedding.vecDimension === "number"
+              ? lastResolvedSnap.embedding.vecDimension
+              : 2560,
+        };
+        const raw = elEmbDim instanceof HTMLInputElement ? elEmbDim.value.trim() : "";
+        if (raw !== "") {
+          const n = Number.parseInt(raw, 10);
+          if (Number.isFinite(n) && n >= 8 && n <= 16384) {
+            out.vecDimension = n;
+          }
+        }
+        return out;
+      })(),
     });
 
     const pt = {};

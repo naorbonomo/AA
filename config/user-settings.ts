@@ -62,6 +62,17 @@ export type UserChat = {
   showTelegramMirror?: boolean;
 };
 
+/** OpenAI-compat embeddings (`POST /v1/embeddings`); uses same Base URL + Bearer as LLM. */
+export type UserEmbedding = {
+  /** Embedding model id served at `{LLM base}/v1/embeddings`. */
+  model?: string;
+  /**
+   * Vector length stored in sqlite-vec — must match API output row length.
+   * Changing after `aa-embeddings.sqlite` exists requires new DB or matching prior dim.
+   */
+  vecDimension?: number;
+};
+
 export type UserSettings = {
   llm?: UserLlm;
   logging?: UserLogging;
@@ -70,6 +81,7 @@ export type UserSettings = {
   whisper?: UserWhisper;
   telegram?: UserTelegram;
   chat?: UserChat;
+  embedding?: UserEmbedding;
 
   /** @deprecated Legacy flat layout — migrated on load. */
   llmBaseUrl?: string;
@@ -128,6 +140,11 @@ export type ResolvedChat = {
   showTelegramMirror: boolean;
 };
 
+export type ResolvedEmbedding = {
+  model: string;
+  vecDimension: number;
+};
+
 export type ResolvedAppSettings = {
   llm: ResolvedLlm;
   logging: ResolvedLogging;
@@ -136,4 +153,5 @@ export type ResolvedAppSettings = {
   whisper: ResolvedWhisper;
   telegram: ResolvedTelegram;
   chat: ResolvedChat;
+  embedding: ResolvedEmbedding;
 };

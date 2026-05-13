@@ -89,6 +89,29 @@
         </details>
 
         <details class="settings-card">
+          <summary class="settings-card__summary">
+            <span class="settings-card__chev" aria-hidden="true">▸</span>
+            <span class="settings-card__summary-text">
+              <span class="settings-card__title">Embeddings</span>
+              <span class="settings-card__file">config/embedding_config.ts · POST /v1/embeddings</span>
+            </span>
+          </summary>
+          <div class="settings-card__body">
+            <p class="settings-card__meta" id="hint-embedding">
+              Uses same <strong>LLM Base URL</strong> and provider Bearer token as chat. Stores vectors in <code>aa-embeddings.sqlite</code> (sqlite-vec). Changing <strong>Vector dimension</strong> after DB exists requires deleting that file or matching stored dim — restart app after change.
+            </p>
+            <label class="field">
+              <span>Embedding model id</span>
+              <input type="text" id="set-embed-model" spellcheck="false" autocomplete="off" placeholder="text-embedding-…" />
+            </label>
+            <label class="field">
+              <span>Vector dimension (sqlite-vec)</span>
+              <input type="text" id="set-embed-vec-dim" inputmode="numeric" aria-describedby="hint-embedding" />
+            </label>
+          </div>
+        </details>
+
+        <details class="settings-card">
         <summary class="settings-card__summary">
           <span class="settings-card__chev" aria-hidden="true">▸</span>
           <span class="settings-card__summary-text">

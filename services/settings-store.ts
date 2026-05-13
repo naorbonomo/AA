@@ -11,11 +11,16 @@ import {
   DEFAULT_AGENT_PROMPT_KEY,
   SYSTEM_PROMPTS,
 } from "../config/system_prompts.js";
+import {
+  EMBEDDING_DEFAULT_MODEL_ID,
+  EMBEDDING_DEFAULT_VEC_DIMENSION,
+} from "../config/embedding_config.js";
 import * as whisperDef from "../config/whisper_config.js";
 import type {
   ResolvedAgent,
   ResolvedAppSettings,
   ResolvedChat,
+  ResolvedEmbedding,
   ResolvedLlm,
   ResolvedLogging,
   ResolvedTelegram,
@@ -23,6 +28,7 @@ import type {
   UserAgent,
   UserAppTime,
   UserChat,
+  UserEmbedding,
   UserLlm,
   UserLogging,
   UserSettings,
@@ -158,6 +164,17 @@ function normalizeDiskShape(raw: unknown): UserSettings {
     }
   }
 
+  const embedding: UserEmbedding = {};
+  if (typeof o.embedding === "object" && o.embedding !== null) {
+    const em = o.embedding as Record<string, unknown>;
+    if (typeof em.model === "string") {
+      embedding.model = em.model;
+    }
+    if (typeof em.vecDimension === "number" && Number.isFinite(em.vecDimension)) {
+      embedding.vecDimension = em.vecDimension;
+    }
+  }
+
   const out: UserSettings = {};
   if (Object.keys(llm).length) out.llm = llm;
   if (Object.keys(logging).length) out.logging = logging;
@@ -166,6 +183,7 @@ function normalizeDiskShape(raw: unknown): UserSettings {
   if (Object.keys(whisper).length) out.whisper = whisper;
   if (Object.keys(telegram).length) out.telegram = telegram;
   if (Object.keys(chat).length) out.chat = chat;
+  if (Object.keys(embedding).length) out.embedding = embedding;
   return out;
 }
 
@@ -278,6 +296,22 @@ function mergeChat(u: UserChat | undefined): ResolvedChat {
   };
 }
 
+function mergeEmbedding(u: UserEmbedding | undefined): ResolvedEmbedding {
+  const x = u ?? {};
+  const model =
+    x.model != null && String(x.model).trim() !== ""
+      ? String(x.model).trim()
+      : EMBEDDING_DEFAULT_MODEL_ID;
+  let vecDimension = EMBEDDING_DEFAULT_VEC_DIMENSION;
+  if (typeof x.vecDimension === "number" && Number.isFinite(x.vecDimension)) {
+    const d = Math.floor(x.vecDimension);
+    if (d >= 8 && d <= 16_384) {
+      vecDimension = d;
+    }
+  }
+  return { model, vecDimension };
+}
+
 function mergeUserWithDefaults(u: UserSettings): ResolvedAppSettings {
   return {
     llm: mergeLlm(u.llm),
@@ -287,6 +321,7 @@ function mergeUserWithDefaults(u: UserSettings): ResolvedAppSettings {
     whisper: mergeWhisper(u.whisper),
     telegram: mergeTelegram(u.telegram),
     chat: mergeChat(u.chat),
+    embedding: mergeEmbedding(u.embedding),
   };
 }
 
@@ -349,6 +384,7 @@ export function saveUserSettingsPatch(patch: Partial<UserSettings>): ResolvedApp
     whisper: { ...(cur.whisper ?? {}), ...(patch.whisper ?? {}) },
     telegram: mergedTg,
     chat: { ...(cur.chat ?? {}), ...(patch.chat ?? {}) },
+    embedding: { ...(cur.embedding ?? {}), ...(patch.embedding ?? {}) },
   };
 
   writeUserFileNested(trimEmptyBranches(next));
@@ -438,6 +474,24 @@ function trimEmptyBranches(s: UserSettings): UserSettings {
     }
     if (Object.keys(ch).length) {
       out.chat = ch;
+    }
+  }
+  if (s.embedding) {
+    const em: UserEmbedding = {};
+    if (typeof s.embedding.model === "string" && s.embedding.model.trim()) {
+      em.model = s.embedding.model.trim();
+    }
+    if (
+      typeof s.embedding.vecDimension === "number" &&
+      Number.isFinite(s.embedding.vecDimension)
+    ) {
+      const d = Math.floor(s.embedding.vecDimension);
+      if (d >= 8 && d <= 16_384) {
+        em.vecDimension = d;
+      }
+    }
+    if (Object.keys(em).length) {
+      out.embedding = em;
     }
   }
   return out;

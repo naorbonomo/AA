@@ -10,6 +10,7 @@ import type {
   UserAgent,
   UserAppTime,
   UserChat,
+  UserEmbedding,
   UserLogging,
   UserLlm,
   UserSettings,
@@ -40,6 +41,7 @@ import {
 import { getLogger } from "../../utils/logger.js";
 import { utcMsToWallDatetimeLocalValue, wallDateTimeInZoneToUtcMs } from "../../utils/app-time.js";
 import { initializeChatHistoryStore, writeChatHistory } from "../../services/chat-history-store.js";
+import { initializeEmbeddingVectorStore } from "../../services/embedding-vector-store.js";
 import { readChatHistoryForDisplay } from "../../services/chat-display-merge.js";
 import { initializeTelegramHistoryStore } from "../../services/telegram-history-store.js";
 import {
@@ -827,6 +829,20 @@ function sanitizeSettingsPatch(raw: unknown): Partial<UserSettings> {
     }
   }
 
+  if ("embedding" in o && o.embedding && typeof o.embedding === "object") {
+    const em = o.embedding as Record<string, unknown>;
+    const embedding: Partial<UserEmbedding> = {};
+    if (typeof em.model === "string") embedding.model = em.model.trim();
+    if (em.vecDimension !== undefined) {
+      const d = Number(em.vecDimension);
+      if (Number.isFinite(d)) {
+        const n = Math.floor(d);
+        if (n >= 8 && n <= 16_384) embedding.vecDimension = n;
+      }
+    }
+    if (Object.keys(embedding).length) out.embedding = embedding as UserEmbedding;
+  }
+
   return out;
 }
 
@@ -838,6 +854,11 @@ app.whenReady().then(() => {
   initializeSettingsStore({ userDataDir: ud });
   initializeSecretsStore({ userDataDir: ud });
   initializeChatHistoryStore({ userDataDir: ud });
+  try {
+    initializeEmbeddingVectorStore({ userDataDir: ud });
+  } catch (e) {
+    log.error("embedding vector store disabled (rebuild native for Electron?)", e);
+  }
   initializeTelegramHistoryStore({ userDataDir: ud });
   initializeSchedulerStore({ userDataDir: ud });
   configureTelegramUserDataDir(ud);
