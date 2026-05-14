@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BrowserWindow, Notification, app, dialog, ipcMain, type WebContents } from "electron";
+import { BrowserWindow, Notification, app, dialog, ipcMain, type OpenDialogOptions, type WebContents } from "electron";
 
 import type { SecretsPayload } from "../../config/secrets_config.js";
 import type {
@@ -117,6 +117,46 @@ function safeSendEmbeddingIndexProgress(
 }
 
 const CHATGPT_CONV_SHARD_RE = /^conversations-(\d+)\.json$/i;
+
+/**
+ * ChatGPT + Claude put transcripts in `conversations.json` or `conversations-NNN.json`.
+ * Native pickers cannot grey out wrong `.json`; we default filter to JSON + label hints, optional macOS `message`, and warn on odd basenames (user can force).
+ */
+const CONVERSATION_EXPORT_JSON_BASENAME_RE = /^conversations(-\d+)?\.json$/i;
+
+async function pickChatExportJsonPath(
+  win: BrowserWindow,
+  args: { title: string; /** macOS: line above picker */ macMessage: string },
+): Promise<string | null> {
+  const openOpts = {
+    title: args.title,
+    message: args.macMessage,
+    buttonLabel: "Choose",
+    filters: [
+      { name: "conversations.json · conversations-*.json", extensions: ["json"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+    properties: ["openFile"] as OpenDialogOptions["properties"],
+  };
+  for (;;) {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, openOpts);
+    if (canceled || filePaths.length === 0) return null;
+    const picked = filePaths[0];
+    const base = path.basename(picked);
+    if (CONVERSATION_EXPORT_JSON_BASENAME_RE.test(base)) return picked;
+    const { response } = await dialog.showMessageBox(win, {
+      type: "question",
+      buttons: ["Choose another…", `Use “${base}”`],
+      defaultId: 0,
+      cancelId: 0,
+      title: args.title,
+      message: `“${base}” is not named like the main chat export file.`,
+      detail:
+        "Expected conversations.json or conversations-000.json. Other export JSON (memories.json, user.json, …) is usually wrong. Pick again, or force this file if you renamed the export.",
+    });
+    if (response === 1) return picked;
+  }
+}
 
 function chatgptShardSortKey(fileName: string): number | null {
   const m = CHATGPT_CONV_SHARD_RE.exec(fileName);
@@ -860,15 +900,14 @@ ipcMain.handle("embedding:importChatgpt", async (event) => {
     if (!win) {
       return { ok: false as const, error: "No window for file dialog." };
     }
-    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    const pickedPath = await pickChatExportJsonPath(win, {
       title: "Import ChatGPT export JSON",
-      filters: [{ name: "JSON", extensions: ["json"] }],
-      properties: ["openFile"],
+      macMessage: "Choose conversations.json or conversations-000.json — not user.json or message_feedback.json.",
     });
-    if (canceled || filePaths.length === 0) {
+    if (!pickedPath) {
       return { ok: false as const, error: "Canceled." };
     }
-    const jsonPaths = resolveChatgptExportJsonPaths(filePaths[0]);
+    const jsonPaths = resolveChatgptExportJsonPaths(pickedPath);
     const merged: ParsedChatgptConversation[] = [];
     for (const fp of jsonPaths) {
       let text = fs.readFileSync(fp, "utf8");
@@ -936,15 +975,14 @@ ipcMain.handle("embedding:importClaude", async (event) => {
     if (!win) {
       return { ok: false as const, error: "No window for file dialog." };
     }
-    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    const pickedPath = await pickChatExportJsonPath(win, {
       title: "Import Claude export JSON",
-      filters: [{ name: "JSON", extensions: ["json"] }],
-      properties: ["openFile"],
+      macMessage: "Choose conversations.json — not memories.json, projects.json, or users.json.",
     });
-    if (canceled || filePaths.length === 0) {
+    if (!pickedPath) {
       return { ok: false as const, error: "Canceled." };
     }
-    let text = fs.readFileSync(filePaths[0], "utf8");
+    let text = fs.readFileSync(pickedPath, "utf8");
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     const rawJson: unknown = JSON.parse(text);
     const merged = parseClaudeExport(rawJson);
