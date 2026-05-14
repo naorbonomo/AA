@@ -1,21 +1,22 @@
-/** Persist imported ChatGPT transcripts for History tab (`aa-imported-chat-sessions.json` under userData). */
+/** Persist imported provider transcripts for History tab (`aa-imported-chat-sessions.json` under userData). */
 
 import fs from "node:fs";
 import path from "node:path";
 
 import type { ChatHistoryRow } from "./chat-history-store.js";
 import { parseChatHistoryRowLossless } from "./chat-history-store.js";
-import type { ParsedChatgptConversation } from "./chatgpt-export-parse.js";
-
-let storeUserDataDir: string | null = null;
 
 const FILE = "aa-imported-chat-sessions.json";
 const MAX_ROWS_PER_SESSION = 50_000;
 const MAX_FIELD = 2_000_000;
 
+let storeUserDataDir: string | null = null;
+
+export type ImportedChatSessionSource = "chatgpt" | "claude";
+
 export type ImportedChatSessionRecord = {
   conversationId: string;
-  source: "chatgpt";
+  source: ImportedChatSessionSource;
   sessionLabel: string;
   importedAtMs: number;
   rows: ChatHistoryRow[];
@@ -80,7 +81,8 @@ function readFileShape(): FileShapeV1 {
         typeof so.importedAtMs === "number" && Number.isFinite(so.importedAtMs)
           ? Math.floor(so.importedAtMs)
           : 0;
-      if (!conversationId || source !== "chatgpt") continue;
+      const srcOk = source === "chatgpt" || source === "claude";
+      if (!conversationId || !srcOk) continue;
       const rowsIn = Array.isArray(so.rows) ? so.rows : [];
       const rows: ChatHistoryRow[] = [];
       for (const raw of rowsIn) {
@@ -91,7 +93,7 @@ function readFileShape(): FileShapeV1 {
       if (!rows.length) continue;
       sessions.push({
         conversationId,
-        source: "chatgpt",
+        source: source as ImportedChatSessionSource,
         sessionLabel: sessionLabel.trim() || "Imported",
         importedAtMs,
         rows: rows.slice(0, MAX_ROWS_PER_SESSION),
@@ -124,7 +126,10 @@ export function readImportedChatSessionsLossless(): ImportedChatSessionRecord[] 
  * Upsert by `conversationId` (re-import replaces transcript + bumps `importedAtMs`).
  * Skips conversations with no rows.
  */
-export function mergeChatgptImportSessions(items: ParsedChatgptConversation[]): void {
+export function mergeImportedChatSessions(
+  items: { conversationId: string; sessionLabel: string; rows: ChatHistoryRow[] }[],
+  source: ImportedChatSessionSource,
+): void {
   if (!items.length) return;
   const cur = readFileShape();
   const map = new Map(cur.sessions.map((s) => [s.conversationId, s]));
@@ -139,7 +144,7 @@ export function mergeChatgptImportSessions(items: ParsedChatgptConversation[]): 
     if (!rows.length) continue;
     map.set(it.conversationId, {
       conversationId: it.conversationId,
-      source: "chatgpt",
+      source,
       sessionLabel: it.sessionLabel.trim() || "Imported",
       importedAtMs: now,
       rows: rows.slice(0, MAX_ROWS_PER_SESSION),

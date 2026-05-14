@@ -25,7 +25,9 @@
         ? "Embed history"
         : o.phase === "chatgpt_import"
           ? "ChatGPT import"
-          : o.phase === "dev_index"
+          : o.phase === "claude_import"
+            ? "Claude import"
+            : o.phase === "dev_index"
             ? "Embed"
             : typeof o.phase === "string"
               ? o.phase
@@ -180,11 +182,14 @@
             const o = /** @type {Record<string, unknown>} */ (raw);
             const conversationId = typeof o.conversationId === "string" ? o.conversationId : "";
             const sessionLabel = typeof o.sessionLabel === "string" ? o.sessionLabel : "Imported";
+            const srcRaw = o.source;
+            const src =
+              srcRaw === "claude" ? "Claude" : srcRaw === "chatgpt" ? "ChatGPT" : "Imported";
             const rows = Array.isArray(o.rows) ? /** @type {Record<string, unknown>[]} */ (o.rows) : [];
             if (!conversationId || !rows.length) continue;
             merged.push({
               id: conversationId,
-              label: `[ChatGPT] ${sessionLabel} · ${rows.length} msg`,
+              label: `[${src}] ${sessionLabel} · ${rows.length} msg`,
               rows,
               imported: true,
             });
@@ -292,6 +297,31 @@
         typeof r.sourceFiles === "number" && r.sourceFiles > 1 ? ` (${r.sourceFiles} JSON files)` : "";
       setStatus(
         `ChatGPT import: ${r.conversationsIndexed ?? 0} conversation(s) indexed (${r.conversations ?? 0} in file), ${r.indexed ?? 0} embedding row(s).${shards}` +
+          (errn ? ` ${errn} warning(s) — see console.` : ""),
+      );
+      if (errn && Array.isArray(r.errors)) console.warn(r.errors);
+      void reload();
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : String(e));
+    } finally {
+      showHistProgress(false);
+    }
+  });
+
+  document.getElementById("btn-hist-import-claude")?.addEventListener("click", async () => {
+    showHistProgress(true);
+    try {
+      if (!aa.embeddingImportClaude) throw new Error("aaDesktop.embeddingImportClaude missing");
+      setStatus("Pick conversations.json from Claude data export…");
+      /** @type {{ ok?: boolean, error?: string, indexed?: number, conversations?: number, conversationsIndexed?: number, errors?: string[], sourceFiles?: number }} */
+      const r = /** @type {*} */ (await aa.embeddingImportClaude());
+      if (!r || r.ok !== true) {
+        setStatus(r && r.error ? String(r.error) : "Import failed.");
+        return;
+      }
+      const errn = Array.isArray(r.errors) ? r.errors.length : 0;
+      setStatus(
+        `Claude import: ${r.conversationsIndexed ?? 0} conversation(s) indexed (${r.conversations ?? 0} in file), ${r.indexed ?? 0} embedding row(s).` +
           (errn ? ` ${errn} warning(s) — see console.` : ""),
       );
       if (errn && Array.isArray(r.errors)) console.warn(r.errors);

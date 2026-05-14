@@ -96,6 +96,9 @@ contextBridge.exposeInMainWorld("aaDesktop", {
   embeddingImportChatgpt() {
     return ipcRenderer.invoke("embedding:importChatgpt");
   },
+  embeddingImportClaude() {
+    return ipcRenderer.invoke("embedding:importClaude");
+  },
   /** @param {(p: unknown) => void} handler @returns {() => void} unsubscribe */
   onEmbeddingIndexProgress(handler) {
     const wrapped = (_e, p) => {

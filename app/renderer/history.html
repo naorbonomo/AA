@@ -35,12 +35,18 @@
         <button type="button" id="btn-hist-import-chatgpt" title="Pick conversations.json or any conversations-NNN.json shard (folder auto-loaded)">
           Import ChatGPT JSON
         </button>
+        <button type="button" id="btn-hist-import-claude" title="Pick conversations.json from Claude Privacy data export ZIP">
+          Import Claude JSON
+        </button>
       </div>
       <p class="hint history-import-hint">
-        ChatGPT export folder: <strong>conversations.json</strong> (older) or <strong>conversations-000.json …</strong> shards (newer). Pick any one shard — app loads every <code>conversations-*.json</code> in that folder. Not user.json / feedback.
+        <strong>ChatGPT:</strong> unzip export → <strong>conversations.json</strong> (older) or pick any <strong>conversations-NNN.json</strong> shard (app loads every <code>conversations-*.json</code> in folder). Not user.json / feedback.
+      </p>
+      <p class="hint history-import-hint">
+        <strong>Claude:</strong> unzip export → <strong>conversations.json</strong> (Settings → Privacy → Export). Not memories.json / projects.json.
       </p>
       <p class="hint">
-        <strong>[ChatGPT]</strong> imports listed first (saved locally); below = this app’s transcript split by gap. Semantic search: Chat agent tool <strong>knowledge_search</strong>, or <strong>Embeddings</strong> tab Search.
+        <strong>[ChatGPT]</strong> / <strong>[Claude]</strong> imports listed first (saved locally); below = this app’s transcript split by gap. Semantic search: Chat agent tool <strong>knowledge_search</strong>, or <strong>Embeddings</strong> tab Search.
       </p>
       <div class="embed-progress-row" id="hist-progress-wrap" hidden>
         <progress id="hist-progress" max="100" value="0"></progress>

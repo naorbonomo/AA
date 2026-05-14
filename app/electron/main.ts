@@ -50,7 +50,7 @@ import {
 } from "../../services/chat-history-store.js";
 import {
   initializeImportedChatSessionsStore,
-  mergeChatgptImportSessions,
+  mergeImportedChatSessions,
   readImportedChatSessionsLossless,
 } from "../../services/imported-chat-sessions-store.js";
 import {
@@ -98,6 +98,7 @@ import {
   hitToContextString,
   searchKnowledgeEnhanced,
 } from "../../services/knowledge-search-curate.js";
+import { parseClaudeExport, type ParsedClaudeConversation } from "../../services/claude-export-parse.js";
 import { parseChatgptExport, type ParsedChatgptConversation } from "../../services/chatgpt-export-parse.js";
 
 const log = getLogger("electron-main");
@@ -105,7 +106,7 @@ const log = getLogger("electron-main");
 function safeSendEmbeddingIndexProgress(
   wc: WebContents,
   payload: {
-    phase: "index_conversation" | "chatgpt_import" | "dev_index";
+    phase: "index_conversation" | "chatgpt_import" | "claude_import" | "dev_index";
   } & EmbeddingIndexProgressEvent,
 ): void {
   try {
@@ -143,8 +144,8 @@ function resolveChatgptExportJsonPaths(pickedPath: string): string[] {
 }
 
 /** Same thread should not appear twice across shards; keep last occurrence if duplicates. */
-function dedupeParsedChatgptImports(items: ParsedChatgptConversation[]): ParsedChatgptConversation[] {
-  const m = new Map<string, ParsedChatgptConversation>();
+function dedupeParsedImports<T extends { conversationId: string }>(items: T[]): T[] {
+  const m = new Map<string, T>();
   const order: string[] = [];
   for (const it of items) {
     if (!m.has(it.conversationId)) order.push(it.conversationId);
@@ -875,9 +876,9 @@ ipcMain.handle("embedding:importChatgpt", async (event) => {
       const raw: unknown = JSON.parse(text);
       merged.push(...parseChatgptExport(raw));
     }
-    const parsed = dedupeParsedChatgptImports(merged);
+    const parsed = dedupeParsedImports(merged);
     const itemsWithRows = parsed.filter((x) => x.rows.length > 0);
-    mergeChatgptImportSessions(itemsWithRows);
+    mergeImportedChatSessions(itemsWithRows, "chatgpt");
     const totalMsgs = itemsWithRows.reduce((acc, x) => acc + x.rows.length, 0);
     safeSendEmbeddingIndexProgress(event.sender, {
       phase: "chatgpt_import",
@@ -925,6 +926,78 @@ ipcMain.handle("embedding:importChatgpt", async (event) => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     log.error("embedding:importChatgpt", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("embedding:importClaude", async (event) => {
+  try {
+    const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow();
+    if (!win) {
+      return { ok: false as const, error: "No window for file dialog." };
+    }
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: "Import Claude export JSON",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+      properties: ["openFile"],
+    });
+    if (canceled || filePaths.length === 0) {
+      return { ok: false as const, error: "Canceled." };
+    }
+    let text = fs.readFileSync(filePaths[0], "utf8");
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    const rawJson: unknown = JSON.parse(text);
+    const merged = parseClaudeExport(rawJson);
+    const parsed = dedupeParsedImports<ParsedClaudeConversation>(merged);
+    const itemsWithRows = parsed.filter((x) => x.rows.length > 0);
+    mergeImportedChatSessions(itemsWithRows, "claude");
+    const totalMsgs = itemsWithRows.reduce((acc, x) => acc + x.rows.length, 0);
+    safeSendEmbeddingIndexProgress(event.sender, {
+      phase: "claude_import",
+      step: 0,
+      total: Math.max(1, totalMsgs),
+      label: `${itemsWithRows.length} chat(s) · ${totalMsgs} message(s)`,
+    });
+    let indexed = 0;
+    const errors: string[] = [];
+    let conversationsIndexed = 0;
+    let msgsDoneBase = 0;
+    for (const item of itemsWithRows) {
+      conversationsIndexed += 1;
+      const r = await indexChatHistoryRows(item.rows, {
+        conversationId: item.conversationId,
+        sessionLabel: item.sessionLabel,
+        onProgress: (e) => {
+          safeSendEmbeddingIndexProgress(event.sender, {
+            phase: "claude_import",
+            step: msgsDoneBase + e.step,
+            total: Math.max(1, totalMsgs),
+            label: item.sessionLabel,
+          });
+        },
+      });
+      if (!r.ok) {
+        errors.push(`${item.sessionLabel}: ${r.error}`);
+        msgsDoneBase += item.rows.length;
+        continue;
+      }
+      indexed += r.indexed;
+      msgsDoneBase += item.rows.length;
+      for (const er of r.errors) {
+        errors.push(`${item.sessionLabel}: ${er}`);
+      }
+    }
+    return {
+      ok: true as const,
+      indexed,
+      conversations: parsed.length,
+      conversationsIndexed,
+      errors,
+      sourceFiles: 1,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("embedding:importClaude", msg);
     return { ok: false as const, error: msg };
   }
 });
