@@ -14,7 +14,7 @@
     "smoke:whisper": "tsx tests/whisper.smoke.ts",
     "smoke:embedding-vector-store": "tsx tests/embedding-vector-store.smoke.ts",
     "electron:packed": "npm run build && electron .",
-    "dev": "npm run build && concurrently -k \"tsc -w -p tsconfig.json\" \"wait-on dist/app/electron/main.js && electron .\"",
+    "dev": "npm run build && concurrently -k \"tsc -w -p tsconfig.json\" \"wait-on dist/app/electron/main.js dist/services/llm.js && electron .\"",
     "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
   },

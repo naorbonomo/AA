@@ -93,6 +93,11 @@ import {
   indexDevEmbeddingPayload,
   searchEmbeddingCorpus,
 } from "../../services/conversation-embeddings.js";
+import {
+  buildKnowledgeCuratorSystemPrompt,
+  hitToContextString,
+  searchKnowledgeEnhanced,
+} from "../../services/knowledge-search-curate.js";
 import { parseChatgptExport, type ParsedChatgptConversation } from "../../services/chatgpt-export-parse.js";
 
 const log = getLogger("electron-main");
@@ -777,6 +782,58 @@ ipcMain.handle("embedding:search", async (_e, raw: unknown) => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     log.error("embedding:search", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+/** Context-engine–style: enhanced vec retrieval + curated LLM answer (`document-chat` + `/ollama-embeddings/search` pattern). */
+ipcMain.handle("knowledge:searchAnswer", async (_e, raw: unknown) => {
+  try {
+    const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const queryText = typeof o.queryText === "string" ? o.queryText.trim() : "";
+    if (!queryText) return { ok: false as const, error: "Empty query." };
+
+    let topK = 5;
+    if (o.topK !== undefined && typeof o.topK === "number" && Number.isFinite(o.topK)) {
+      topK = Math.min(100, Math.max(1, Math.floor(o.topK)));
+    }
+    const enhanced = o.enhanced !== false;
+
+    const sr = await searchKnowledgeEnhanced({ queryText, topK, enhanced });
+    if (!sr.ok) return sr;
+
+    const contexts = sr.hits.map(hitToContextString);
+    if (!contexts.length) {
+      return {
+        ok: true as const,
+        answer:
+          "No matching embedded passages found. Index conversations (History / Embeddings tab) or import ChatGPT export first.",
+        contexts: [] as string[],
+        hits: sr.hits.map((h) => ({ rowid: h.rowid, body: h.body, distance: h.distance })),
+        queryVariations: sr.queryVariations,
+        searchMetadata: sr.searchMetadata,
+      };
+    }
+
+    const systemPrompt = buildKnowledgeCuratorSystemPrompt(queryText, contexts);
+    const answer = await chatCompletion({
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: queryText },
+      ],
+    });
+
+    return {
+      ok: true as const,
+      answer,
+      contexts,
+      hits: sr.hits.map((h) => ({ rowid: h.rowid, body: h.body, distance: h.distance })),
+      queryVariations: sr.queryVariations,
+      searchMetadata: sr.searchMetadata,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("knowledge:searchAnswer", msg);
     return { ok: false as const, error: msg };
   }
 });

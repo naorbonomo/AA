@@ -86,6 +86,10 @@ contextBridge.exposeInMainWorld("aaDesktop", {
   embeddingSearch(payload) {
     return ipcRenderer.invoke("embedding:search", payload);
   },
+  /** Enhanced vec search + LLM synthesis (context-engine Search + document-chat pattern). */
+  knowledgeSearchAnswer(payload) {
+    return ipcRenderer.invoke("knowledge:searchAnswer", payload);
+  },
   embeddingList(payload) {
     return ipcRenderer.invoke("embedding:list", payload ?? {});
   },

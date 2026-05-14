@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob: data:; script-src 'self'; style-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AA · Search</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="page-scheduler page--settings">
+  <header class="top">
+    <nav class="nav" aria-label="Pages">
+      <a href="chat.html" class="nav__tab">Chat</a>
+      <a href="history.html" class="nav__tab">History</a>
+      <a href="search.html" class="nav__tab is-active" aria-current="page">Search</a>
+      <a href="embedding.html" class="nav__tab">Embeddings</a>
+      <a href="scheduler.html" class="nav__tab">Scheduler</a>
+      <a href="settings.html" class="nav__tab">Settings</a>
+    </nav>
+  </header>
+
+  <main class="page page--settings">
+    <div class="col-head"><span>Knowledge search</span></div>
+    <div class="settings-scroll">
+      <div class="settings-body">
+        <p class="hint">
+          Same pipeline as context-engine: multi-query embedding retrieval (optional) then LLM reads top excerpts and writes curated answer — mirrors <code>/ollama-embeddings/search</code> + <code>/document-chat</code>.
+        </p>
+
+        <label class="field">
+          <span>Query</span>
+          <textarea id="search-q" rows="3" spellcheck="false" placeholder="Natural language question…"></textarea>
+        </label>
+
+        <div class="field field--row">
+          <label class="field">
+            <span>Top K</span>
+            <input type="number" id="search-k" min="1" max="100" value="5" />
+          </label>
+          <label class="check">
+            <input type="checkbox" id="search-enhanced" checked />
+            Enhanced retrieval (multi-query + sufficiency pass)
+          </label>
+        </div>
+
+        <div class="settings-actions">
+          <button type="button" id="btn-search-run">Search &amp; curate</button>
+        </div>
+
+        <section class="search-curate-section" aria-labelledby="search-answer-heading">
+          <h2 id="search-answer-heading" class="search-section-title">Curated answer</h2>
+          <pre id="search-answer" class="search-answer-block" aria-live="polite"></pre>
+        </section>
+
+        <section class="search-hits-section" aria-labelledby="search-hits-heading">
+          <h2 id="search-hits-heading" class="search-section-title">Top excerpts</h2>
+          <div id="search-hits" class="search-hits-list"></div>
+        </section>
+
+        <p class="settings-status" id="search-status" aria-live="polite"></p>
+        <pre id="search-meta" class="embedding-results search-meta-pre" aria-live="polite"></pre>
+      </div>
+    </div>
+  </main>
+
+  <script src="./search-page.js"></script>
+</body>
+</html>

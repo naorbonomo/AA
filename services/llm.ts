@@ -361,26 +361,62 @@ function buildOpenAiBody(
     role: m.role,
     content: typeof m.content === "string" ? m.content : String(m.content),
   }));
-  const body = {
+  const body: Record<string, unknown> = {
     model,
     messages,
     temperature,
     stream,
     ...cerebrasChatExtras(lm.provider, model),
-  } as OpenAiChatCompletionRequestBody & Record<string, unknown>;
-  if (stream) {
+  };
+  /* vLLM: `stream_options` only valid with `stream: true`; never attach for non-stream bodies. */
+  if (stream === true) {
     body.stream_options = { include_usage: true };
   }
-  return body;
+  return body as OpenAiChatCompletionRequestBody;
+}
+
+const CEREBRAS_CHAT_EXTRA_KEYS = ["reasoning_effort", "max_tokens", "top_p"] as const;
+
+/**
+ * JSON for non-streaming `/v1/chat/completions` — allowlisted top-level keys only so `stream_options`
+ * and other streaming-only fields never leak (vLLM rejects `stream_options` unless `stream=true`).
+ */
+function wireChatCompletionsBodyNonStreaming(body: Record<string, unknown>): string {
+  const plain = JSON.parse(JSON.stringify(body)) as Record<string, unknown>;
+  const out: Record<string, unknown> = {
+    model: plain.model,
+    messages: plain.messages,
+    temperature: plain.temperature,
+    stream: false,
+  };
+  if (plain.tools !== undefined) out.tools = plain.tools;
+  if (plain.tool_choice !== undefined) out.tool_choice = plain.tool_choice;
+  for (const k of CEREBRAS_CHAT_EXTRA_KEYS) {
+    if (plain[k] !== undefined) out[k] = plain[k];
+  }
+  return JSON.stringify(out);
 }
 
 /** POST `/v1/chat/completions` (OpenAI shape); returns assistant text. */
 export async function chatCompletion(args: ChatCompletionArgs): Promise<string> {
   const s = getResolvedSettings();
   const url = `${s.llm.baseUrl}/v1/chat/completions`;
-  const bodyPayload = buildOpenAiBody(args, s, false);
-  const bodyStr = JSON.stringify(bodyPayload);
-  const rq = summarizeSystemForRequestLog(bodyPayload.messages);
+  const lm = s.llm;
+  const model = args.model ?? lm.model;
+  const temperature = args.temperature ?? lm.temperature;
+  const messages = args.messages.map((m) => ({
+    role: m.role,
+    content: typeof m.content === "string" ? m.content : String(m.content),
+  }));
+  const bodyPayload: Record<string, unknown> = {
+    model,
+    messages,
+    temperature,
+    stream: false,
+    ...cerebrasChatExtras(lm.provider, model),
+  };
+  const bodyStr = wireChatCompletionsBodyNonStreaming(bodyPayload);
+  const rq = summarizeSystemForRequestLog(messages);
 
   const started = Date.now();
 
@@ -393,14 +429,16 @@ export async function chatCompletion(args: ChatCompletionArgs): Promise<string> 
     headers.Authorization = `Bearer ${key}`;
   }
 
+  const wireTopKeys = Object.keys(JSON.parse(bodyStr) as Record<string, unknown>).sort().join(",");
   log.info("POST /v1/chat/completions", {
     url,
-    model: bodyPayload.model,
-    messageCount: bodyPayload.messages.length,
-    temperature: bodyPayload.temperature,
-    stream: bodyPayload.stream,
+    model,
+    messageCount: messages.length,
+    temperature,
+    stream: false,
     authBearer: Boolean(key),
     bodyUtf8Bytes: Buffer.byteLength(bodyStr, "utf8"),
+    wireTopKeys,
     ...rq,
   });
   maybeLogRawLlmBody("chatCompletion", bodyStr);
@@ -500,7 +538,7 @@ export function previewChatCompletionsBody(opts: {
     temperature: opts.temperature ?? s.llm.temperature,
     stream: opts.stream,
   };
-  if (opts.stream) {
+  if (opts.stream === true) {
     bodyPayload.stream_options = { include_usage: true };
   }
   if (opts.tools && opts.tools.length > 0) {
@@ -533,6 +571,8 @@ export async function completionPost(params: {
   }
   Object.assign(bodyPayload, cerebrasChatExtras(s.llm.provider, String(bodyPayload.model)));
 
+  const bodyStr = wireChatCompletionsBodyNonStreaming(bodyPayload);
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -542,7 +582,6 @@ export async function completionPost(params: {
     headers.Authorization = `Bearer ${key}`;
   }
 
-  const bodyStr = JSON.stringify(bodyPayload);
   const rq = summarizeSystemForRequestLog(bodyPayload.messages as JsonChatMessageShape[]);
 
   log.info("POST /v1/chat/completions (tools)", {
