@@ -155,8 +155,12 @@
       meta.className = "history-msg__role";
       meta.textContent = role;
       const body = document.createElement("div");
-      body.className = "history-msg__body";
-      body.textContent = content;
+      body.className = "history-msg__body msg-md";
+      if (window.aaChatFormat && typeof window.aaChatFormat.formatChatMarkdown === "function") {
+        body.innerHTML = window.aaChatFormat.formatChatMarkdown(content);
+      } else {
+        body.textContent = content;
+      }
       block.appendChild(meta);
       block.appendChild(body);
       elTranscript.appendChild(block);

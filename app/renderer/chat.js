@@ -487,6 +487,15 @@
       .replace(/>/g, "&gt;");
   }
 
+  /** Rich message body (markdown subset); falls back to escaped breaks when formatter missing. */
+  function chatBodyHtml(content) {
+    const c = typeof content === "string" ? content : "";
+    if (window.aaChatFormat && typeof window.aaChatFormat.formatChatMarkdown === "function") {
+      return window.aaChatFormat.formatChatMarkdown(c);
+    }
+    return esc(c).replace(/\n/g, "<br />");
+  }
+
   /** Strip attachment manifest + vision hint from bubble; full `content` stays for model. */
   function userDisplayBody(content, hasManifest) {
     if (!hasManifest || typeof content !== "string") {
@@ -870,8 +879,8 @@
         '<div class="msg-stream__think-body"><pre class="msg-stream__think-text">' +
         esc(m.reasoning) +
         "</pre></div></aside>" +
-        '<div class="msg-stream__answer">' +
-        esc(m.content) +
+        '<div class="msg-stream__answer msg-md">' +
+        chatBodyHtml(m.content) +
         "</div></div>";
     } else if (r === "user" && m.displayAttachments && m.displayAttachments.length) {
       div.insertAdjacentHTML("afterbegin", roleHeadHtml(r, m.atMs, m.source));
@@ -920,8 +929,8 @@
       const textPart = userDisplayBody(m.content, true);
       if (textPart) {
         const p = document.createElement("div");
-        p.className = "msg-attach-text";
-        p.textContent = textPart;
+        p.className = "msg-attach-text msg-md";
+        p.innerHTML = chatBodyHtml(textPart);
         bodyWrap.appendChild(p);
       }
       div.appendChild(bodyWrap);
@@ -944,7 +953,8 @@
         div.appendChild(row);
       }
     } else {
-      div.innerHTML = roleHeadHtml(r, m.atMs, m.source) + '<div class="body">' + esc(m.content) + "</div>";
+      div.innerHTML =
+        roleHeadHtml(r, m.atMs, m.source) + '<div class="body msg-md">' + chatBodyHtml(m.content) + "</div>";
       if (
         r === "user" &&
         orphanUserNeedsRetry() &&

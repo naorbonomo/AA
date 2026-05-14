@@ -1033,6 +1033,10 @@ body {
   font-size: 94%;
 }
 
+.msg-attach-text.msg-md {
+  white-space: normal;
+}
+
 .msg-user-actions {
   margin-top: 0.55vh;
   display: flex;
@@ -1295,6 +1299,118 @@ body {
   color: rgb(167, 243, 198);
 }
 
+/* Markdown-ish LLM bodies (chat + history) */
+.msg-md {
+  white-space: normal;
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.msg-md__p {
+  margin: 0.35em 0;
+}
+
+.msg-md__p:first-child {
+  margin-top: 0;
+}
+
+.msg-md__p:last-child {
+  margin-bottom: 0;
+}
+
+.msg-md__h {
+  margin: 0.55em 0 0.25em;
+  font-size: 100%;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: inherit;
+}
+
+.msg-md__h:first-child {
+  margin-top: 0;
+}
+
+.msg-md__ul,
+.msg-md__ol {
+  margin: 0.35em 0;
+  padding-left: 1.35em;
+}
+
+.msg-md__ul li,
+.msg-md__ol li {
+  margin: 0.2em 0;
+}
+
+.msg-md__bq {
+  margin: 0.45em 0;
+  padding: 0.35em 0.65em;
+  border-left: 3px solid rgba(129, 140, 248, 0.55);
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 0 6px 6px 0;
+  color: rgb(203, 213, 245);
+}
+
+.msg-md__ic {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  padding: 0.12em 0.38em;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.35);
+  border: var(--hairline) solid rgba(255, 255, 255, 0.08);
+}
+
+.msg-md__pre {
+  margin: 0.55em 0;
+  padding: 0.65em 0.75em;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  border: var(--hairline) solid rgba(148, 163, 184, 0.22);
+  overflow-x: auto;
+  max-width: 100%;
+  position: relative;
+}
+
+.msg-md__pre:first-child {
+  margin-top: 0;
+}
+
+.msg-md__pre:last-child {
+  margin-bottom: 0;
+}
+
+.msg-md__fence {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 86%;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  color: rgb(226, 232, 240);
+}
+
+.msg-md__pre[data-lang]::before {
+  content: attr(data-lang);
+  display: block;
+  font-size: 68%;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.85);
+  margin-bottom: 0.35em;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.msg-md__a {
+  color: rgb(147, 197, 253);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.msg-md__a:hover {
+  color: rgb(191, 219, 254);
+}
+
 .agent-tool-trace {
   margin-top: 0.65vh;
   padding-top: 0.55vh;
@@ -1504,6 +1620,10 @@ body {
 .history-msg__body {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.history-msg__body.msg-md {
+  white-space: normal;
 }
 
 .embedding-divider {
