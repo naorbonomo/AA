@@ -1728,3 +1728,85 @@ body {
 .search-meta-pre {
   max-height: 22vh;
 }
+
+.page-memory .memory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.page-memory .memory-resume-hint {
+  max-width: 56rem;
+}
+
+.page-memory button.danger {
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #fca5a5;
+}
+
+.page-memory .memory-section-title {
+  font-size: 88%;
+  margin: 0.4rem 0 0.35rem;
+  color: var(--muted);
+}
+
+.page-memory .memory-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+
+.page-memory .memory-facts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 78%;
+}
+
+.page-memory .memory-facts-table th,
+.page-memory .memory-facts-table td {
+  border-bottom: var(--hairline) solid var(--border);
+  padding: 0.35rem 0.45rem;
+  vertical-align: top;
+}
+
+.page-memory .memory-facts-table th {
+  color: var(--muted);
+  font-weight: 600;
+  text-align: left;
+}
+
+.page-memory .memory-facts-table input[type="text"],
+.page-memory .memory-facts-table input[type="number"],
+.page-memory .memory-facts-table select {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: inherit;
+}
+
+.page-memory .memory-facts-table textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 4rem;
+  resize: vertical;
+  font-size: inherit;
+}
+
+.page-memory .memory-ts {
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 92%;
+}
+
+.page-memory .memory-actions-cell {
+  white-space: nowrap;
+}
+
+.page-memory .memory-actions-cell button + button {
+  margin-left: 0.35rem;
+}
+
+.page-memory td.memory-empty {
+  color: var(--muted);
+  padding: 0.65rem 0.35rem;
+}

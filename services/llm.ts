@@ -279,6 +279,10 @@ export type ChatCompletionArgs = {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
+  /** Cap completion tokens (passed as `max_tokens` when supported by wire payload). */
+  maxTokens?: number;
+  /** OpenAI-style JSON mode when server supports it. */
+  responseFormat?: { type: "json_object" };
 };
 
 export type OpenAiChatCompletionRequestBody = {
@@ -394,6 +398,7 @@ function wireChatCompletionsBodyNonStreaming(body: Record<string, unknown>): str
   for (const k of CEREBRAS_CHAT_EXTRA_KEYS) {
     if (plain[k] !== undefined) out[k] = plain[k];
   }
+  if (plain.response_format !== undefined) out.response_format = plain.response_format;
   return JSON.stringify(out);
 }
 
@@ -415,6 +420,12 @@ export async function chatCompletion(args: ChatCompletionArgs): Promise<string> 
     stream: false,
     ...cerebrasChatExtras(lm.provider, model),
   };
+  if (args.responseFormat) {
+    bodyPayload.response_format = args.responseFormat;
+  }
+  if (args.maxTokens !== undefined && Number.isFinite(args.maxTokens) && args.maxTokens > 0) {
+    bodyPayload.max_tokens = Math.floor(args.maxTokens);
+  }
   const bodyStr = wireChatCompletionsBodyNonStreaming(bodyPayload);
   const rq = summarizeSystemForRequestLog(messages);
 

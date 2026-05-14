@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; script-src 'self'; style-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AA · Memory</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="page-scheduler page-memory page--settings">
+  <header class="top">
+    <nav class="nav" aria-label="Pages">
+      <a href="chat.html" class="nav__tab">Chat</a>
+      <a href="history.html" class="nav__tab">History</a>
+      <a href="memory.html" class="nav__tab is-active" aria-current="page">Memory</a>
+      <a href="search.html" class="nav__tab">Search</a>
+      <a href="embedding.html" class="nav__tab">Embeddings</a>
+      <a href="scheduler.html" class="nav__tab">Scheduler</a>
+      <a href="settings.html" class="nav__tab">Settings</a>
+    </nav>
+  </header>
+
+  <main class="page page--settings">
+    <div class="col-head"><span>User memory</span></div>
+    <div class="settings-scroll">
+      <div class="settings-body">
+        <p class="hint">
+          Structured facts extracted after agent replies (fire-and-forget) or via harvest from imported transcripts.
+          Profile-style questions in Chat route here using stored facts + embedding index when available.
+        </p>
+        <div class="settings-actions memory-actions">
+          <button type="button" id="mem-refresh">Refresh list</button>
+          <button type="button" id="mem-clear" class="danger">Clear all memory</button>
+        </div>
+        <p id="mem-status" class="settings-card__meta" aria-live="polite"></p>
+
+        <hr class="embedding-divider" />
+
+        <h3 class="memory-section-title">Harvest from transcripts</h3>
+        <label class="field memory-checkbox">
+          <input type="checkbox" id="mem-harvest-live" />
+          <span>Include current app chat history (<code>aa-chat-history.json</code>)</span>
+        </label>
+        <div class="settings-actions memory-actions">
+          <button type="button" id="mem-harvest">Harvest imported + optional live pairs</button>
+          <button type="button" id="mem-harvest-stop" disabled>Stop after current pair</button>
+        </div>
+        <p id="mem-harvest-resume-hint" class="settings-card__meta memory-resume-hint" hidden></p>
+        <p class="settings-card__meta">
+          Saves facts after each pair (table refreshes while running). Pause stops before starting next pair; next Harvest resumes if same checkbox setting as when paused.
+          Token use follows your LLM server defaults (completion + any separate reasoning channel).
+        </p>
+
+        <hr class="embedding-divider" />
+
+        <table class="memory-facts-table" aria-label="Stored facts">
+          <thead>
+            <tr>
+              <th scope="col">Key</th>
+              <th scope="col">Value</th>
+              <th scope="col">Confidence</th>
+              <th scope="col">Category</th>
+              <th scope="col">Updated</th>
+              <th scope="col">Source turn</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="mem-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script src="./memory-page.js"></script>
+</body>
+</html>

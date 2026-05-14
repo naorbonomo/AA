@@ -113,7 +113,38 @@ contextBridge.exposeInMainWorld("aaDesktop", {
     ipcRenderer.on("embedding:index-progress", wrapped);
     return () => ipcRenderer.removeListener("embedding:index-progress", wrapped);
   },
-  /** Agent loop (web_search, schedule_job, stt, tts, youtube_transcribe); `onStep({ kind, status, ... })`, optional `onStreamDelta({ reasoning?, content? })`. */
+  memoryListFacts() {
+    return ipcRenderer.invoke("memory:list");
+  },
+  memoryPatchFact(payload) {
+    return ipcRenderer.invoke("memory:patch", payload);
+  },
+  memoryDeleteFact(id) {
+    return ipcRenderer.invoke("memory:delete", { id });
+  },
+  memoryClearAll() {
+    return ipcRenderer.invoke("memory:clear");
+  },
+  memoryHarvest(payload) {
+    return ipcRenderer.invoke("memory:harvest", payload ?? {});
+  },
+  memoryHarvestStop() {
+    return ipcRenderer.invoke("memory:harvest-stop");
+  },
+  /** @param {(p: unknown) => void} handler @returns {() => void} unsubscribe */
+  onMemoryHarvestProgress(handler) {
+    const wrapped = (_e, p) => {
+      if (typeof handler === "function") {
+        try {
+          handler(p);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    };
+    ipcRenderer.on("memory:harvest-progress", wrapped);
+    return () => ipcRenderer.removeListener("memory:harvest-progress", wrapped);
+  },
   schedulerList() {
     return ipcRenderer.invoke("scheduler:list");
   },
@@ -192,6 +223,7 @@ contextBridge.exposeInMainWorld("aaDesktop", {
     return () => ipcRenderer.removeListener("whisper:progress", wrapped);
   },
   /**
+   * Agent loop (web_search, schedule_job, stt, tts, youtube_transcribe); `onStep({ kind, status, ... })`, optional `onStreamDelta({ reasoning?, content? })`.
    * @param {{ role: string, content: string }[]} messages
    * @param {((p: unknown) => void)|undefined} onStep
    * @param {((d: unknown) => void)|undefined} onStreamDelta

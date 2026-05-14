@@ -100,6 +100,21 @@ import {
 } from "../../services/knowledge-search-curate.js";
 import { parseClaudeExport, type ParsedClaudeConversation } from "../../services/claude-export-parse.js";
 import { parseChatgptExport, type ParsedChatgptConversation } from "../../services/chatgpt-export-parse.js";
+import {
+  enqueueFactExtractionAfterAssistantTurn,
+  harvestFactsFromImportedSessions,
+  isProfileQueryIntent,
+  latestUserMessage,
+  streamProfileSynthesis,
+} from "../../services/user-memory-pipeline.js";
+import {
+  clearAllFacts,
+  deleteFact,
+  getFactsForProfile,
+  initializeUserMemoryStore,
+  listFacts,
+  updateFactById,
+} from "../../services/user-memory-store.js";
 
 const log = getLogger("electron-main");
 
@@ -115,6 +130,21 @@ function safeSendEmbeddingIndexProgress(
     /* ignore */
   }
 }
+
+function safeSendMemoryHarvestProgress(
+  wc: WebContents,
+  payload: { step: number; total: number; factsTick?: boolean },
+): void {
+  try {
+    if (!wc.isDestroyed()) wc.send("memory:harvest-progress", payload);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** One harvest at a time; `AbortController` for stop between pairs. */
+let memoryHarvestAbort: AbortController | null = null;
+let memoryHarvestBusy = false;
 
 const CHATGPT_CONV_SHARD_RE = /^conversations-(\d+)\.json$/i;
 
@@ -268,6 +298,138 @@ ipcMain.handle("imported-chat:get-lossless", () => {
     const msg = e instanceof Error ? e.message : String(e);
     log.error("imported-chat:get-lossless", msg);
     return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("memory:list", () => {
+  try {
+    const facts = listFacts().map((f) => ({
+      id: f.id,
+      key: f.key,
+      value: f.value,
+      confidence: f.confidence,
+      category: f.category,
+      source_turn_id: f.source_turn_id,
+      updated_at_ms: f.updated_at_ms,
+      created_at_ms: f.created_at_ms,
+    }));
+    return { ok: true as const, facts };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("memory:list", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("memory:patch", async (_e, raw: unknown) => {
+  try {
+    const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const id = Number(o.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return { ok: false as const, error: "invalid id" };
+    }
+    const patch: { key?: string; value?: string; confidence?: number; category?: string } = {};
+    if (typeof o.key === "string") patch.key = o.key;
+    if (typeof o.value === "string") patch.value = o.value;
+    if (typeof o.category === "string") patch.category = o.category;
+    const cf = Number(o.confidence);
+    if (typeof o.confidence === "number" && Number.isFinite(o.confidence)) {
+      patch.confidence = o.confidence;
+    } else if (typeof o.confidence === "string" && Number.isFinite(cf)) {
+      patch.confidence = cf;
+    }
+    if (
+      patch.key === undefined &&
+      patch.value === undefined &&
+      patch.confidence === undefined &&
+      patch.category === undefined
+    ) {
+      return { ok: false as const, error: "nothing to patch" };
+    }
+    const r = await updateFactById(id, patch);
+    return r.ok ? { ok: true as const } : r;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("memory:patch", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("memory:delete", (_e, raw: unknown) => {
+  try {
+    const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const id = Number(o.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return { ok: false as const, error: "invalid id" };
+    }
+    const ok = deleteFact(id);
+    return ok ? { ok: true as const } : { ok: false as const, error: "not found" };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("memory:delete", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("memory:clear", () => {
+  try {
+    clearAllFacts();
+    return { ok: true as const };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("memory:clear", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("memory:harvest-stop", () => {
+  try {
+    memoryHarvestAbort?.abort();
+    return { ok: true as const };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("memory:harvest-stop", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("memory:harvest", async (event, raw: unknown) => {
+  const wc = event.sender;
+  if (memoryHarvestBusy) {
+    return { ok: false as const, error: "Harvest already running — stop it first or wait for finish." };
+  }
+  memoryHarvestBusy = true;
+  memoryHarvestAbort?.abort();
+  const ac = new AbortController();
+  memoryHarvestAbort = ac;
+  try {
+    const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const includeLiveHistory = o.includeLiveHistory === true;
+    const rawStart = o.startPairIndex;
+    let startPairIndex = 0;
+    if (typeof rawStart === "number" && Number.isFinite(rawStart)) {
+      startPairIndex = Math.max(0, Math.floor(rawStart));
+    }
+    const r = await harvestFactsFromImportedSessions({
+      includeLiveHistory,
+      startPairIndex,
+      signal: ac.signal,
+      onProgress: (p) => safeSendMemoryHarvestProgress(wc, p),
+    });
+    return {
+      ok: true as const,
+      pairsTotal: r.pairsTotal,
+      pairsProcessed: r.pairsProcessed,
+      aborted: r.aborted,
+      nextPairIndex: r.nextPairIndex,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("memory:harvest", msg);
+    return { ok: false as const, error: msg };
+  } finally {
+    memoryHarvestBusy = false;
+    memoryHarvestAbort = null;
   }
 });
 
@@ -699,6 +861,34 @@ ipcMain.handle("agent:chat", async (event, raw: unknown) => {
 
   const wc = event.sender;
   try {
+    const lastUserMsg = latestUserMessage(hist);
+    if (lastUserMsg && isProfileQueryIntent(lastUserMsg)) {
+      let corpusNote = "";
+      const sr = await searchEmbeddingCorpus({ queryText: lastUserMsg, topK: 10 });
+      const hits = sr.ok ? sr.hits : [];
+      if (!sr.ok) {
+        corpusNote = `\nNote: local embedding index unavailable (${sr.error}). Answer from structured facts only.`;
+      }
+      const facts = getFactsForProfile();
+      const syn = await streamProfileSynthesis({
+        facts,
+        hits,
+        userQuestion: lastUserMsg,
+        corpusNote,
+        onDelta: (d: StreamDelta) => {
+          if (!wc.isDestroyed()) {
+            wc.send("agent:stream-delta", d);
+          }
+        },
+      });
+      return {
+        ok: true as const,
+        text: syn.text,
+        steps: [],
+        usage: syn.usage ?? null,
+      };
+    }
+
     const out = await runChatWithWebSearchFromSettings(
       hist,
       (p: AgentStepPayload) => {
@@ -713,6 +903,8 @@ ipcMain.handle("agent:chat", async (event, raw: unknown) => {
       },
       stagedAudioByFileName,
     );
+    const turnId = `live:${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    enqueueFactExtractionAfterAssistantTurn(hist, out.text, turnId);
     return {
       ok: true as const,
       text: out.text,
@@ -1299,6 +1491,7 @@ app.whenReady().then(() => {
   initializeSecretsStore({ userDataDir: ud });
   initializeChatHistoryStore({ userDataDir: ud });
   initializeImportedChatSessionsStore({ userDataDir: ud });
+  initializeUserMemoryStore({ userDataDir: ud });
   initializeEmbeddingVectorStore({ userDataDir: ud });
   if (!isEmbeddingVectorStoreReady()) {
     log.error("embedding vector store disabled — embeddings tab / knowledge_search need sqlite + sqlite-vec", {
