@@ -4,6 +4,8 @@
   const tbody = document.getElementById("mem-tbody");
   const statusEl = document.getElementById("mem-status");
   const btnRefresh = document.getElementById("mem-refresh");
+  const btnWriteMd = document.getElementById("mem-write-md");
+  const btnExportMd = document.getElementById("mem-export-md");
   const btnClear = document.getElementById("mem-clear");
   const btnHarvest = document.getElementById("mem-harvest");
   const btnHarvestStop = document.getElementById("mem-harvest-stop");
@@ -17,6 +19,7 @@
   const CATEGORIES = ["identity", "preference", "behavior", "goal", "relationship", "context"];
 
   let harvestRunning = false;
+  let mdWriteBusy = false;
   let harvestCur = { step: 0, total: 0 };
   let factsReloadTimer = null;
 
@@ -105,12 +108,24 @@
     }, 450);
   }
 
+  /** Harvest + markdown export mutually exclude (same LLM). */
+  function syncMemoryLlmutex() {
+    const lock = harvestRunning || mdWriteBusy;
+    if (btnHarvest instanceof HTMLButtonElement) btnHarvest.disabled = lock;
+    if (btnHarvestStop instanceof HTMLButtonElement) btnHarvestStop.disabled = !harvestRunning;
+    if (chkHarvestLive instanceof HTMLInputElement) chkHarvestLive.disabled = harvestRunning;
+    if (selHarvestConc instanceof HTMLSelectElement) selHarvestConc.disabled = harvestRunning;
+    if (btnWriteMd instanceof HTMLButtonElement) btnWriteMd.disabled = lock;
+  }
+
   function setHarvestBusy(isBusy) {
     harvestRunning = isBusy;
-    if (btnHarvest instanceof HTMLButtonElement) btnHarvest.disabled = isBusy;
-    if (btnHarvestStop instanceof HTMLButtonElement) btnHarvestStop.disabled = !isBusy;
-    if (chkHarvestLive instanceof HTMLInputElement) chkHarvestLive.disabled = isBusy;
-    if (selHarvestConc instanceof HTMLSelectElement) selHarvestConc.disabled = isBusy;
+    syncMemoryLlmutex();
+  }
+
+  function setMdWriteBusy(b) {
+    mdWriteBusy = b;
+    syncMemoryLlmutex();
   }
 
   function renderFacts(facts) {
@@ -270,6 +285,53 @@
     chkHarvestLive?.addEventListener("change", () => renderResumeHint());
     btnRefresh?.addEventListener("click", () => void reload({}));
 
+    btnWriteMd?.addEventListener("click", async () => {
+      if (!aa || typeof aa.memoryWriteMd !== "function") return;
+      if (harvestRunning) {
+        setStatus("Wait for harvest to finish.");
+        return;
+      }
+      setMdWriteBusy(true);
+      setStatus("Writing memory.md via LLM…");
+      try {
+        const r = /** @type {{ ok?: boolean, path?: string, factCount?: number, error?: string }} */ (
+          await aa.memoryWriteMd()
+        );
+        if (!r || r.ok !== true) {
+          setStatus(r && r.error ? r.error : "memory.md write failed");
+          return;
+        }
+        setStatus(
+          `Wrote memory.md (${r.factCount ?? "?"} facts) · ${typeof r.path === "string" ? r.path : "?"}`,
+        );
+      } catch (e) {
+        setStatus(e instanceof Error ? e.message : String(e));
+      } finally {
+        setMdWriteBusy(false);
+      }
+    });
+
+    btnExportMd?.addEventListener("click", async () => {
+      if (!aa || typeof aa.memoryExportMdAs !== "function") return;
+      setStatus("Choose where to save…");
+      try {
+        const r = /** @type {{ ok?: boolean, canceled?: boolean, path?: string, error?: string }} */ (
+          await aa.memoryExportMdAs()
+        );
+        if (!r || r.ok !== true) {
+          setStatus(r && r.error ? r.error : "Export failed");
+          return;
+        }
+        if (r.canceled === true) {
+          setStatus("Export canceled.");
+          return;
+        }
+        setStatus(typeof r.path === "string" ? `Exported to ${r.path}` : "Exported.");
+      } catch (e) {
+        setStatus(e instanceof Error ? e.message : String(e));
+      }
+    });
+
     btnClear?.addEventListener("click", async () => {
       if (!confirm("Delete all stored user facts?")) return;
       if (typeof aa.memoryClearAll !== "function") return;
@@ -363,6 +425,7 @@
     });
 
     renderResumeHint();
+    syncMemoryLlmutex();
     void reload({});
   }
 })();

@@ -62,6 +62,11 @@ export function getUserMemoryDbPath(): string {
   return path.join(aaRootFromCwd(), "aa-user-memory.sqlite");
 }
 
+/** Canonical exported profile doc beside `aa-user-memory.sqlite`. */
+export function getUserMemoryMdPath(): string {
+  return path.join(path.dirname(getUserMemoryDbPath()), "memory.md");
+}
+
 export function initializeUserMemoryStore(opts?: { userDataDir?: string }): void {
   if (opts?.userDataDir?.trim()) {
     storeUserDataDir = opts.userDataDir.trim();

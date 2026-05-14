@@ -313,6 +313,54 @@ export async function streamProfileSynthesis(opts: {
   return { text: acc.trim(), wallMs: out.wallMs, usage: out.usage };
 }
 
+const MEMORY_MD_SYSTEM = `You consolidate USER memory FACTS into one Markdown document (will be saved as memory.md).
+
+Rules:
+- Output Markdown only (no JSON). Start with a single top-level title: # User memory
+- Organize with ## / ### headings by theme or by fact category when that reads well.
+- Merge duplicates and near-duplicates; when two fact values conflict, prefer higher confidence and briefly note uncertainty.
+- Use bullets where helpful; stay concise; do not invent traits not supported by the input facts.
+- Optional small "Sources" section listing source_turn_id values if useful (truncate very long ids).
+
+Reasoning may appear outside the doc in your stack; still produce the markdown document as the main user-visible content.`;
+
+/** Strip thinking noise, optional ```md ... ``` wrapper, trim. */
+function stripMemoryMdCompletion(raw: string): string {
+  const cleaned = stripThinkingNoise(raw.trim());
+  let x = stripJsonFence(cleaned).trim();
+  const fenced = /^```(?:markdown|md)?\s*\r?\n([\s\S]*?)\r?\n```$/im.exec(x);
+  if (fenced?.[1]) x = fenced[1].trim();
+  return x.trim();
+}
+
+/** One-shot LLM pass: cohesive memory.md body from SQLite facts (confidence-ordered input list). */
+export async function synthesizeMemoryMarkdownFromFacts(facts: StoredUserFact[]): Promise<string> {
+  if (!facts.length) return "";
+  const bundle = facts.map((f) => ({
+    key: f.key,
+    value: f.value,
+    confidence: f.confidence,
+    category: f.category,
+    source_turn_id: f.source_turn_id,
+  }));
+  let text: string;
+  try {
+    text = await chatCompletion({
+      messages: [
+        { role: "system", content: MEMORY_MD_SYSTEM },
+        { role: "user", content: `Facts JSON:\n${JSON.stringify(bundle)}` },
+      ],
+      temperature: 0.35,
+    });
+  } catch (e) {
+    log.warn("synthesizeMemoryMarkdownFromFacts chatCompletion failed", {
+      msg: e instanceof Error ? e.message : String(e),
+    });
+    throw e;
+  }
+  return stripMemoryMdCompletion(text);
+}
+
 export type HarvestProgressPayload = {
   step: number;
   total: number;

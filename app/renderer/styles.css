@@ -1751,6 +1751,12 @@ body {
   color: var(--muted);
 }
 
+.page-memory .memory-hint-secondary {
+  font-size: 86%;
+  color: var(--muted);
+  margin-top: -0.15rem;
+}
+
 .page-memory .memory-checkbox {
   display: flex;
   align-items: flex-start;

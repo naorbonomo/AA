@@ -125,6 +125,14 @@ contextBridge.exposeInMainWorld("aaDesktop", {
   memoryClearAll() {
     return ipcRenderer.invoke("memory:clear");
   },
+  /** LLM merges facts → writes `memory.md` beside user-memory DB; `{ ok, path?, factCount?, error? }`. */
+  memoryWriteMd() {
+    return ipcRenderer.invoke("memory:write-md");
+  },
+  /** Save dialog → copy app `memory.md` to chosen path (`{ ok, path? }` | `{ ok, canceled }` | `{ ok: false, error }`). */
+  memoryExportMdAs() {
+    return ipcRenderer.invoke("memory:export-md-as");
+  },
   memoryHarvest(payload) {
     return ipcRenderer.invoke("memory:harvest", payload ?? {});
   },

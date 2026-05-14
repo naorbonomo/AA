@@ -106,11 +106,13 @@ import {
   isProfileQueryIntent,
   latestUserMessage,
   streamProfileSynthesis,
+  synthesizeMemoryMarkdownFromFacts,
 } from "../../services/user-memory-pipeline.js";
 import {
   clearAllFacts,
   deleteFact,
   getFactsForProfile,
+  getUserMemoryMdPath,
   initializeUserMemoryStore,
   listFacts,
   updateFactById,
@@ -378,6 +380,62 @@ ipcMain.handle("memory:clear", () => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     log.error("memory:clear", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("memory:write-md", async () => {
+  try {
+    const facts = listFacts();
+    if (!facts.length) {
+      return { ok: false as const, error: "No facts stored — harvest or chat first." };
+    }
+    const body = await synthesizeMemoryMarkdownFromFacts(facts);
+    if (!body.trim().length) {
+      return { ok: false as const, error: "LLM returned empty document." };
+    }
+    const outPath = getUserMemoryMdPath();
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    const header = `<!-- aa memory.md · ${facts.length} fact(s) · ${new Date().toISOString()} -->\n\n`;
+    fs.writeFileSync(outPath, `${header}${body}`, "utf8");
+    return { ok: true as const, path: outPath, factCount: facts.length };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("memory:write-md", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("memory:export-md-as", async (event) => {
+  try {
+    const src = getUserMemoryMdPath();
+    if (!fs.existsSync(src)) {
+      return {
+        ok: false as const,
+        error: 'memory.md not found — run "Write memory.md (LLM)" first.',
+      };
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) {
+      return { ok: false as const, error: "No window — reopen Memory tab." };
+    }
+    const docs = app.getPath("documents");
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: "Export memory.md",
+      defaultPath: path.join(docs, "memory.md"),
+      filters: [
+        { name: "Markdown", extensions: ["md", "markdown"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    if (canceled || typeof filePath !== "string" || !filePath.length) {
+      return { ok: true as const, canceled: true as const };
+    }
+    fs.copyFileSync(src, filePath);
+    return { ok: true as const, path: filePath };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("memory:export-md-as", msg);
     return { ok: false as const, error: msg };
   }
 });
