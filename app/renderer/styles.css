@@ -1757,6 +1757,17 @@ body {
   gap: 0.45rem;
 }
 
+.page-memory .memory-concurrency-field {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.page-memory .memory-concurrency-field select {
+  margin-left: 0;
+  flex: 0 0 auto;
+  min-width: 4rem;
+}
+
 .page-memory .memory-facts-table {
   width: 100%;
   border-collapse: collapse;

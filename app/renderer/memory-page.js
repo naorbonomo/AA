@@ -8,6 +8,8 @@
   const btnHarvest = document.getElementById("mem-harvest");
   const btnHarvestStop = document.getElementById("mem-harvest-stop");
   const chkHarvestLive = document.getElementById("mem-harvest-live");
+  /** @type {HTMLSelectElement | null} */
+  const selHarvestConc = document.getElementById("mem-harvest-concurrency");
   const resumeHintEl = document.getElementById("mem-harvest-resume-hint");
 
   const RESUME_KEY = "aa-memory-harvest-resume-v1";
@@ -107,6 +109,8 @@
     harvestRunning = isBusy;
     if (btnHarvest instanceof HTMLButtonElement) btnHarvest.disabled = isBusy;
     if (btnHarvestStop instanceof HTMLButtonElement) btnHarvestStop.disabled = !isBusy;
+    if (chkHarvestLive instanceof HTMLInputElement) chkHarvestLive.disabled = isBusy;
+    if (selHarvestConc instanceof HTMLSelectElement) selHarvestConc.disabled = isBusy;
   }
 
   function renderFacts(facts) {
@@ -288,7 +292,7 @@
       if (!aa || typeof aa.memoryHarvestStop !== "function") return;
       try {
         await aa.memoryHarvestStop();
-        setStatus("Stop requested — finishes current pair then pauses.");
+        setStatus("Stop requested — waits for in-flight calls, then pauses.");
       } catch (_) {
         /* ignore */
       }
@@ -298,6 +302,11 @@
       if (typeof aa.memoryHarvest !== "function") return;
       const includeLive = chkHarvestLive instanceof HTMLInputElement && chkHarvestLive.checked === true;
       const startPairIndex = startIndexForHarvest(includeLive);
+      let maxConcurrency = 4;
+      if (selHarvestConc instanceof HTMLSelectElement) {
+        const n = Number(selHarvestConc.value);
+        if (Number.isFinite(n)) maxConcurrency = Math.min(32, Math.max(1, Math.floor(n)));
+      }
 
       /** @type {(() => void) | null} */
       let unsub = null;
@@ -321,7 +330,11 @@
 
       try {
         const r = /** @type {{ ok?: boolean, pairsTotal?: number, pairsProcessed?: number, aborted?: boolean, nextPairIndex?: number, error?: string }} */ (
-          await aa.memoryHarvest({ includeLiveHistory: includeLive, startPairIndex })
+          await aa.memoryHarvest({
+            includeLiveHistory: includeLive,
+            startPairIndex,
+            maxConcurrency,
+          })
         );
         if (typeof unsub === "function") unsub();
 

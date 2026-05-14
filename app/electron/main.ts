@@ -410,9 +410,15 @@ ipcMain.handle("memory:harvest", async (event, raw: unknown) => {
     if (typeof rawStart === "number" && Number.isFinite(rawStart)) {
       startPairIndex = Math.max(0, Math.floor(rawStart));
     }
+    const rawConcurrency = (o as { maxConcurrency?: unknown }).maxConcurrency;
+    let maxConcurrency = 4;
+    if (typeof rawConcurrency === "number" && Number.isFinite(rawConcurrency)) {
+      maxConcurrency = Math.min(32, Math.max(1, Math.floor(rawConcurrency)));
+    }
     const r = await harvestFactsFromImportedSessions({
       includeLiveHistory,
       startPairIndex,
+      maxConcurrency,
       signal: ac.signal,
       onProgress: (p) => safeSendMemoryHarvestProgress(wc, p),
     });

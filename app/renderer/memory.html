@@ -41,13 +41,30 @@
           <input type="checkbox" id="mem-harvest-live" />
           <span>Include current app chat history (<code>aa-chat-history.json</code>)</span>
         </label>
+        <label class="field memory-checkbox memory-concurrency-field">
+          <span>Max concurrent extractions</span>
+          <select id="mem-harvest-concurrency" aria-label="Max concurrent extraction requests">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="6">6</option>
+            <option value="8">8</option>
+            <option value="12">12</option>
+            <option value="16">16</option>
+            <option value="24">24</option>
+            <option value="32">32</option>
+          </select>
+        </label>
         <div class="settings-actions memory-actions">
           <button type="button" id="mem-harvest">Harvest imported + optional live pairs</button>
-          <button type="button" id="mem-harvest-stop" disabled>Stop after current pair</button>
+          <button type="button" id="mem-harvest-stop" disabled>Stop (finish in-flight)</button>
         </div>
         <p id="mem-harvest-resume-hint" class="settings-card__meta memory-resume-hint" hidden></p>
         <p class="settings-card__meta">
-          Saves facts after each pair (table refreshes while running). Pause stops before starting next pair; next Harvest resumes if same checkbox setting as when paused.
+          Saves facts after each pair (table refreshes while running). Stop aborts scheduler; queued pairs wait, in-flight HTTP calls run to completion.
+          Higher concurrency skips per-pair delay (concurrency <code>1</code> keeps small delay).
+          Next Harvest resumes if same checkbox setting as when paused.
           Token use follows your LLM server defaults (completion + any separate reasoning channel).
         </p>
 

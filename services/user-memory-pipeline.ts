@@ -365,38 +365,63 @@ export type HarvestRunResult = {
   nextPairIndex: number;
 };
 
+const DEFAULT_HARVEST_MAX_CONCURRENCY = 4;
+const MAX_HARVEST_MAX_CONCURRENCY = 32;
+
+function clampHarvestConcurrency(raw: unknown): number {
+  const n =
+    typeof raw === "number" && Number.isFinite(raw) ? Math.floor(raw) : DEFAULT_HARVEST_MAX_CONCURRENCY;
+  return Math.min(MAX_HARVEST_MAX_CONCURRENCY, Math.max(1, n));
+}
+
 /**
- * Sequential extraction over imported sessions (+ optional live transcript); yields between pairs for UI responsiveness.
+ * Imported sessions (+ optional live transcript). Schedules up to `maxConcurrency` overlapping LLM extracts;
+ * contiguous prefix advances `HarvestProgress.step` for stable progress bar; skips inter-pair delay when concurrency > 1.
  */
 export async function harvestFactsFromImportedSessions(opts: {
   includeLiveHistory: boolean;
   delayMsBetweenPairs?: number;
+  /** Parallel LLM extractions cap (default 4). */
+  maxConcurrency?: number;
   /** First pair index to process (resume). */
   startPairIndex?: number;
   signal?: AbortSignal;
   onProgress?: (p: HarvestProgressPayload) => void;
 }): Promise<HarvestRunResult> {
   const pairs = buildHarvestPairList(opts.includeLiveHistory);
-  const delayMs =
+  const delayMsRaw =
     typeof opts.delayMsBetweenPairs === "number" ? Math.max(0, Math.floor(opts.delayMsBetweenPairs)) : 120;
+  const concurrency = clampHarvestConcurrency(opts.maxConcurrency);
+  const delayMs = concurrency > 1 ? 0 : delayMsRaw;
   let start = typeof opts.startPairIndex === "number" ? Math.floor(opts.startPairIndex) : 0;
   if (!Number.isFinite(start) || start < 0) start = 0;
   if (start > pairs.length) start = pairs.length;
 
   let processed = 0;
   const total = pairs.length;
+  const done = new Set<number>();
 
-  for (let j = start; j < pairs.length; j += 1) {
-    if (opts.signal?.aborted) {
-      return { pairsTotal: total, pairsProcessed: processed, aborted: true, nextPairIndex: j };
-    }
+  /** Stable `step` toward `total`: 1-based next slot in `[start …)` missing from contiguous done prefix from `start`; backfill completions keep bar moving. */
+  const emitHarvestProgress = (factsTick?: boolean) => {
+    let fm = start;
+    while (fm < pairs.length && done.has(fm)) fm += 1;
+    const step = fm >= pairs.length ? total : fm + 1;
+    opts.onProgress?.({
+      step: total === 0 ? 0 : step,
+      total,
+      factsTick: factsTick === true ? true : undefined,
+    });
+  };
+
+  const processOne = async (j: number): Promise<void> => {
     const p = pairs[j];
-    opts.onProgress?.({ step: j + 1, total });
     if (!p.userText.length || !p.assistantText.length) {
+      done.add(j);
+      emitHarvestProgress();
       if (delayMs > 0 && j < pairs.length - 1) {
         await new Promise((r) => setTimeout(r, delayMs));
       }
-      continue;
+      return;
     }
     await extractFactsFromExchange({
       userText: p.userText,
@@ -404,13 +429,39 @@ export async function harvestFactsFromImportedSessions(opts: {
       sourceTurnId: p.sourceTurnId,
     });
     processed += 1;
-    opts.onProgress?.({ step: j + 1, total, factsTick: true });
-    if (opts.signal?.aborted) {
-      return { pairsTotal: total, pairsProcessed: processed, aborted: true, nextPairIndex: j + 1 };
-    }
+    done.add(j);
+    emitHarvestProgress(true);
     if (delayMs > 0 && j < pairs.length - 1) {
       await new Promise((r) => setTimeout(r, delayMs));
     }
+  };
+
+  const indices = Array.from({ length: pairs.length - start }, (_, k) => start + k);
+  const executing = new Set<Promise<void>>();
+  const sig = opts.signal;
+
+  for (const j of indices) {
+    if (sig?.aborted) break;
+    const p = processOne(j).finally(() => {
+      executing.delete(p);
+    });
+    executing.add(p);
+    if (executing.size >= concurrency) {
+      await Promise.race(executing);
+    }
+  }
+  await Promise.all(executing);
+
+  let nextPairIndex = pairs.length;
+  for (let j = start; j < pairs.length; j += 1) {
+    if (!done.has(j)) {
+      nextPairIndex = j;
+      break;
+    }
+  }
+  const aborted = Boolean(sig?.aborted);
+  if (aborted) {
+    return { pairsTotal: total, pairsProcessed: processed, aborted: true, nextPairIndex };
   }
   return { pairsTotal: total, pairsProcessed: processed, aborted: false, nextPairIndex: pairs.length };
 }
