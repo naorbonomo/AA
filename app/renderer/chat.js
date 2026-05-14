@@ -1120,7 +1120,7 @@
       if (!s || typeof s !== "object") continue;
       if (s.status !== "done") continue;
       const k = s.kind;
-      if (k === "web_search" || k === "schedule_job" || k === "stt" || k === "tts" || k === "youtube_transcribe") {
+      if (k === "web_search" || k === "knowledge_search" || k === "schedule_job" || k === "stt" || k === "tts" || k === "youtube_transcribe") {
         n += 1;
       }
     }
@@ -1239,6 +1239,28 @@
           (ok ? "" : " (fail)");
         if (prov) line += " · " + prov;
         bits.push(line + (pv ? "\n  " + pv : ""));
+        continue;
+      }
+      if (
+        s &&
+        typeof s === "object" &&
+        s.kind === "knowledge_search" &&
+        s.status === "done"
+      ) {
+        const q = typeof s.query === "string" ? s.query : "?";
+        const n = typeof s.hitCount === "number" ? s.hitCount : 0;
+        const ok = /** @type {{ ok?: boolean }} */ (s).ok !== false;
+        const pv = typeof s.previewSummary === "string" ? s.previewSummary : "";
+        let line =
+          'knowledge_search "' +
+          (q.length > 56 ? q.slice(0, 56) + "…" : q) +
+          '" → ' +
+          n +
+          " hit" +
+          (n === 1 ? "" : "s") +
+          (ok ? "" : " (fail)");
+        bits.push(line + (pv ? "\n  " + pv : ""));
+        continue;
       }
     }
     return bits.join("\n\n");
@@ -1331,6 +1353,17 @@
           ) {
             pend.setAnswerSearchBanner(
               "Searching web: " + step.query.slice(0, 120) + (step.query.length > 120 ? "…" : ""),
+            );
+          }
+          if (
+            step &&
+            typeof step === "object" &&
+            step.kind === "knowledge_search" &&
+            step.status === "start" &&
+            typeof step.query === "string"
+          ) {
+            pend.setAnswerSearchBanner(
+              "Knowledge index: " + step.query.slice(0, 120) + (step.query.length > 120 ? "…" : ""),
             );
           }
           scrollMsgsToBottom();

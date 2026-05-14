@@ -1,9 +1,10 @@
 /** Electron main: IPC for LLM, nested settings + secrets stores. */
 
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BrowserWindow, Notification, app, ipcMain } from "electron";
+import { BrowserWindow, Notification, app, dialog, ipcMain, type WebContents } from "electron";
 
 import type { SecretsPayload } from "../../config/secrets_config.js";
 import type {
@@ -40,8 +41,24 @@ import {
 } from "../../services/settings-store.js";
 import { getLogger } from "../../utils/logger.js";
 import { utcMsToWallDatetimeLocalValue, wallDateTimeInZoneToUtcMs } from "../../utils/app-time.js";
-import { initializeChatHistoryStore, writeChatHistory } from "../../services/chat-history-store.js";
-import { initializeEmbeddingVectorStore } from "../../services/embedding-vector-store.js";
+import {
+  initializeChatHistoryStore,
+  writeChatHistory,
+  readChatHistoryLossless,
+  parseChatHistoryRowLossless,
+  type ChatHistoryRow,
+} from "../../services/chat-history-store.js";
+import {
+  initializeImportedChatSessionsStore,
+  mergeChatgptImportSessions,
+  readImportedChatSessionsLossless,
+} from "../../services/imported-chat-sessions-store.js";
+import {
+  getEmbeddingVectorStoreInitError,
+  initializeEmbeddingVectorStore,
+  isEmbeddingVectorStoreReady,
+  listEmbeddingBodies,
+} from "../../services/embedding-vector-store.js";
 import { readChatHistoryForDisplay } from "../../services/chat-display-merge.js";
 import { initializeTelegramHistoryStore } from "../../services/telegram-history-store.js";
 import {
@@ -70,8 +87,66 @@ import {
   MAX_CHAT_AUDIO_ATTACH_BYTES,
 } from "../../services/telegram-voice.js";
 import { setWhisperCacheDir, transcribePcm } from "../../services/whisper-transformers.js";
+import {
+  type EmbeddingIndexProgressEvent,
+  indexChatHistoryRows,
+  indexDevEmbeddingPayload,
+  searchEmbeddingCorpus,
+} from "../../services/conversation-embeddings.js";
+import { parseChatgptExport, type ParsedChatgptConversation } from "../../services/chatgpt-export-parse.js";
 
 const log = getLogger("electron-main");
+
+function safeSendEmbeddingIndexProgress(
+  wc: WebContents,
+  payload: {
+    phase: "index_conversation" | "chatgpt_import" | "dev_index";
+  } & EmbeddingIndexProgressEvent,
+): void {
+  try {
+    if (!wc.isDestroyed()) wc.send("embedding:index-progress", payload);
+  } catch {
+    /* ignore */
+  }
+}
+
+const CHATGPT_CONV_SHARD_RE = /^conversations-(\d+)\.json$/i;
+
+function chatgptShardSortKey(fileName: string): number | null {
+  const m = CHATGPT_CONV_SHARD_RE.exec(fileName);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+/**
+ * Newer exports use `conversations-000.json`, `conversations-001.json`, … in one folder.
+ * Picking any shard loads every matching file in that directory (numeric order).
+ * Legacy single `conversations.json` → unchanged.
+ */
+function resolveChatgptExportJsonPaths(pickedPath: string): string[] {
+  const dir = path.dirname(pickedPath);
+  const base = path.basename(pickedPath);
+  if (chatgptShardSortKey(base) === null) return [pickedPath];
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return [pickedPath];
+  }
+  const shards = entries.filter((n) => chatgptShardSortKey(n) !== null);
+  shards.sort((a, b) => chatgptShardSortKey(a)! - chatgptShardSortKey(b)!);
+  return shards.map((n) => path.join(dir, n));
+}
+
+/** Same thread should not appear twice across shards; keep last occurrence if duplicates. */
+function dedupeParsedChatgptImports(items: ParsedChatgptConversation[]): ParsedChatgptConversation[] {
+  const m = new Map<string, ParsedChatgptConversation>();
+  const order: string[] = [];
+  for (const it of items) {
+    if (!m.has(it.conversationId)) order.push(it.conversationId);
+    m.set(it.conversationId, it);
+  }
+  return order.map((id) => m.get(id)!);
+}
 
 let telegramHandles: TelegramIntegrationHandles | null = null;
 
@@ -126,6 +201,26 @@ ipcMain.handle("chat-history:get", () => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     log.error("chat-history:get", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("chat-history:get-lossless", () => {
+  try {
+    return { ok: true as const, rows: readChatHistoryLossless() };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("chat-history:get-lossless", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("imported-chat:get-lossless", () => {
+  try {
+    return { ok: true as const, sessions: readImportedChatSessionsLossless() };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("imported-chat:get-lossless", msg);
     return { ok: false as const, error: msg };
   }
 });
@@ -596,6 +691,187 @@ ipcMain.handle("tools:webSearch", async (_e, raw: unknown) => {
   return webSearch(query, maxResults !== undefined ? { maxResults } : {});
 });
 
+ipcMain.handle("embedding:indexConversation", async (event, raw: unknown) => {
+  try {
+    const sender = event.sender;
+    const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const conversationId =
+      typeof o.conversationId === "string" && o.conversationId.trim()
+        ? o.conversationId.trim()
+        : "default";
+    const sessionLabel = typeof o.sessionLabel === "string" ? o.sessionLabel : undefined;
+    let rows: ChatHistoryRow[];
+    if (Array.isArray(o.rows)) {
+      rows = o.rows
+        .map((x) => parseChatHistoryRowLossless(x))
+        .filter((x): x is ChatHistoryRow => x !== null);
+    } else {
+      rows = readChatHistoryLossless();
+    }
+    const n = rows.length;
+    safeSendEmbeddingIndexProgress(sender, {
+      phase: "index_conversation",
+      step: 0,
+      total: Math.max(1, n),
+      label: sessionLabel ?? conversationId,
+    });
+    return await indexChatHistoryRows(rows, {
+      conversationId,
+      sessionLabel,
+      onProgress: (e) => {
+        safeSendEmbeddingIndexProgress(sender, {
+          phase: "index_conversation",
+          step: e.step,
+          total: Math.max(1, e.total),
+          label: e.label ? `${sessionLabel ?? conversationId} · ${e.label}` : sessionLabel ?? conversationId,
+        });
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("embedding:indexConversation", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("embedding:indexDev", async (event, raw: unknown) => {
+  try {
+    const sender = event.sender;
+    const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const text = typeof o.text === "string" ? o.text : "";
+    const imagePath = typeof o.imagePath === "string" && o.imagePath.trim() ? o.imagePath.trim() : undefined;
+    const conversationId =
+      typeof o.conversationId === "string" && o.conversationId.trim() ? o.conversationId.trim() : "dev";
+    safeSendEmbeddingIndexProgress(sender, {
+      phase: "dev_index",
+      step: 0,
+      total: 1,
+      label: conversationId,
+    });
+    return await indexDevEmbeddingPayload({
+      text,
+      imagePath,
+      conversationId,
+      onProgress: (e) => {
+        safeSendEmbeddingIndexProgress(sender, { phase: "dev_index", ...e });
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("embedding:indexDev", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("embedding:search", async (_e, raw: unknown) => {
+  try {
+    const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    const queryText = typeof o.queryText === "string" ? o.queryText : "";
+    const imagePath =
+      typeof o.imagePath === "string" && o.imagePath.trim() ? o.imagePath.trim() : undefined;
+    let topK = 8;
+    if (o.topK !== undefined && typeof o.topK === "number" && Number.isFinite(o.topK)) {
+      topK = Math.min(100, Math.max(1, Math.floor(o.topK)));
+    }
+    return await searchEmbeddingCorpus({ queryText, imagePath, topK });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("embedding:search", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("embedding:list", (_e, raw: unknown) => {
+  try {
+    const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+    let lim = 100;
+    if (o.limit !== undefined && typeof o.limit === "number" && Number.isFinite(o.limit)) {
+      lim = Math.min(10_000, Math.max(1, Math.floor(o.limit)));
+    }
+    return { ok: true as const, rows: listEmbeddingBodies(lim) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("embedding:list", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
+ipcMain.handle("embedding:importChatgpt", async (event) => {
+  try {
+    const win = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow();
+    if (!win) {
+      return { ok: false as const, error: "No window for file dialog." };
+    }
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: "Import ChatGPT export JSON",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+      properties: ["openFile"],
+    });
+    if (canceled || filePaths.length === 0) {
+      return { ok: false as const, error: "Canceled." };
+    }
+    const jsonPaths = resolveChatgptExportJsonPaths(filePaths[0]);
+    const merged: ParsedChatgptConversation[] = [];
+    for (const fp of jsonPaths) {
+      let text = fs.readFileSync(fp, "utf8");
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      const raw: unknown = JSON.parse(text);
+      merged.push(...parseChatgptExport(raw));
+    }
+    const parsed = dedupeParsedChatgptImports(merged);
+    const itemsWithRows = parsed.filter((x) => x.rows.length > 0);
+    mergeChatgptImportSessions(itemsWithRows);
+    const totalMsgs = itemsWithRows.reduce((acc, x) => acc + x.rows.length, 0);
+    safeSendEmbeddingIndexProgress(event.sender, {
+      phase: "chatgpt_import",
+      step: 0,
+      total: Math.max(1, totalMsgs),
+      label: `${itemsWithRows.length} chat(s) · ${totalMsgs} message(s)`,
+    });
+    let indexed = 0;
+    const errors: string[] = [];
+    let conversationsIndexed = 0;
+    let msgsDoneBase = 0;
+    for (const item of itemsWithRows) {
+      conversationsIndexed += 1;
+      const r = await indexChatHistoryRows(item.rows, {
+        conversationId: item.conversationId,
+        sessionLabel: item.sessionLabel,
+        onProgress: (e) => {
+          safeSendEmbeddingIndexProgress(event.sender, {
+            phase: "chatgpt_import",
+            step: msgsDoneBase + e.step,
+            total: Math.max(1, totalMsgs),
+            label: item.sessionLabel,
+          });
+        },
+      });
+      if (!r.ok) {
+        errors.push(`${item.sessionLabel}: ${r.error}`);
+        msgsDoneBase += item.rows.length;
+        continue;
+      }
+      indexed += r.indexed;
+      msgsDoneBase += item.rows.length;
+      for (const er of r.errors) {
+        errors.push(`${item.sessionLabel}: ${er}`);
+      }
+    }
+    return {
+      ok: true as const,
+      indexed,
+      conversations: parsed.length,
+      conversationsIndexed,
+      errors,
+      sourceFiles: jsonPaths.length,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    log.error("embedding:importChatgpt", msg);
+    return { ok: false as const, error: msg };
+  }
+});
+
 function sanitizeSecretsPatch(patch: Partial<SecretsPayload>): Partial<SecretsPayload> {
   const out: Partial<SecretsPayload> = {};
   if (patch.telegram_bot_token !== undefined) {
@@ -854,10 +1130,12 @@ app.whenReady().then(() => {
   initializeSettingsStore({ userDataDir: ud });
   initializeSecretsStore({ userDataDir: ud });
   initializeChatHistoryStore({ userDataDir: ud });
-  try {
-    initializeEmbeddingVectorStore({ userDataDir: ud });
-  } catch (e) {
-    log.error("embedding vector store disabled (rebuild native for Electron?)", e);
+  initializeImportedChatSessionsStore({ userDataDir: ud });
+  initializeEmbeddingVectorStore({ userDataDir: ud });
+  if (!isEmbeddingVectorStoreReady()) {
+    log.error("embedding vector store disabled — embeddings tab / knowledge_search need sqlite + sqlite-vec", {
+      detail: getEmbeddingVectorStoreInitError(),
+    });
   }
   initializeTelegramHistoryStore({ userDataDir: ud });
   initializeSchedulerStore({ userDataDir: ud });

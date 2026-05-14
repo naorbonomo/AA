@@ -20,6 +20,35 @@ let storeUserDataDir: string | null = null;
 let db: Database.Database | null = null;
 let vecDim = EMBEDDING_DEFAULT_VEC_DIMENSION;
 let insertStmt: Database.Statement | null = null;
+/** Set when last `initializeEmbeddingVectorStore` failed (native load, dim mismatch, etc.). */
+let lastEmbeddingStoreError: string | null = null;
+
+/** True after successful `initializeEmbeddingVectorStore` for this process. */
+export function isEmbeddingVectorStoreReady(): boolean {
+  return db !== null && insertStmt !== null;
+}
+
+export function getEmbeddingVectorStoreInitError(): string | null {
+  return lastEmbeddingStoreError;
+}
+
+/**
+ * Open store if needed. Preserves existing `userDataDir` when opts omit it (retries after startup failure).
+ * Prefer passing `userDataDir` from Electron `app.getPath("userData")` once.
+ */
+export function ensureEmbeddingVectorStoreOpened(opts?: {
+  userDataDir?: string;
+}): { ok: true } | { ok: false; error: string } {
+  if (isEmbeddingVectorStoreReady()) return { ok: true };
+  initializeEmbeddingVectorStore(opts);
+  if (isEmbeddingVectorStoreReady()) return { ok: true };
+  return {
+    ok: false,
+    error:
+      lastEmbeddingStoreError ??
+      "Embedding vector store unavailable (sqlite / sqlite-vec failed — try `npm run rebuild:electron`).",
+  };
+}
 
 function aaRootFromCwd(): string {
   const cwd = process.cwd();
@@ -54,57 +83,75 @@ export function getEmbeddingVectorDimension(): number {
 }
 
 export function initializeEmbeddingVectorStore(opts?: { userDataDir?: string }): void {
-  storeUserDataDir = opts?.userDataDir?.trim() ? opts.userDataDir : null;
+  lastEmbeddingStoreError = null;
+  if (opts?.userDataDir?.trim()) {
+    storeUserDataDir = opts.userDataDir.trim();
+  }
   vecDim = resolvedVecDimension();
   closeEmbeddingVectorStore();
 
-  const filePath = getEmbeddingDbFilePath();
-  const dir = path.dirname(filePath);
+  let conn: Database.Database | null = null;
   try {
-    fs.mkdirSync(dir, { recursive: true });
-  } catch {
-    /* exists */
-  }
+    const filePath = getEmbeddingDbFilePath();
+    const dir = path.dirname(filePath);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      /* exists */
+    }
 
-  const conn = new Database(filePath);
-  conn.pragma("journal_mode = WAL");
-  sqliteVec.load(conn);
+    conn = new Database(filePath);
+    conn.pragma("journal_mode = WAL");
+    sqliteVec.load(conn);
 
-  conn.exec(`
-    CREATE TABLE IF NOT EXISTS ${META_TABLE} (
-      k TEXT PRIMARY KEY NOT NULL,
-      v TEXT NOT NULL
-    );
-  `);
-
-  const dimRow = conn
-    .prepare(`SELECT v FROM ${META_TABLE} WHERE k = 'embedding_dim'`)
-    .get() as { v: string } | undefined;
-
-  if (!dimRow) {
     conn.exec(`
-      CREATE VIRTUAL TABLE ${VEC_TABLE} USING vec0(
-        embedding float[${vecDim}],
-        +body text
+      CREATE TABLE IF NOT EXISTS ${META_TABLE} (
+        k TEXT PRIMARY KEY NOT NULL,
+        v TEXT NOT NULL
       );
     `);
-    conn.prepare(`INSERT INTO ${META_TABLE}(k, v) VALUES ('embedding_dim', ?)`).run(String(vecDim));
-    log.info("created vec store", { filePath, vecDim });
-  } else {
-    const stored = Number.parseInt(dimRow.v, 10);
-    if (!Number.isFinite(stored) || stored !== vecDim) {
-      conn.close();
-      throw new Error(
-        `Embedding DB dimension mismatch: file has ${stored}, runtime wants ${vecDim}. Delete ${filePath} or change Embeddings → vector dimension / AA_EMBEDDING_VEC_DIM to match, then restart.`,
-      );
-    }
-    log.info("opened vec store", { filePath, vecDim });
-  }
 
-  insertStmt = conn.prepare(
-    `INSERT INTO ${VEC_TABLE}(rowid, embedding, body) VALUES (?, ?, ?)`,
-  );
-  db = conn;
+    const dimRow = conn
+      .prepare(`SELECT v FROM ${META_TABLE} WHERE k = 'embedding_dim'`)
+      .get() as { v: string } | undefined;
+
+    if (!dimRow) {
+      conn.exec(`
+        CREATE VIRTUAL TABLE ${VEC_TABLE} USING vec0(
+          embedding float[${vecDim}],
+          +body text
+        );
+      `);
+      conn.prepare(`INSERT INTO ${META_TABLE}(k, v) VALUES ('embedding_dim', ?)`).run(String(vecDim));
+      log.info("created vec store", { filePath, vecDim });
+    } else {
+      const stored = Number.parseInt(dimRow.v, 10);
+      if (!Number.isFinite(stored) || stored !== vecDim) {
+        conn.close();
+        conn = null;
+        throw new Error(
+          `Embedding DB dimension mismatch: file has ${stored}, runtime wants ${vecDim}. Delete ${filePath} or change Embeddings → vector dimension / AA_EMBEDDING_VEC_DIM to match, then restart.`,
+        );
+      }
+      log.info("opened vec store", { filePath, vecDim });
+    }
+
+    insertStmt = conn.prepare(`INSERT INTO ${VEC_TABLE}(rowid, embedding, body) VALUES (?, ?, ?)`);
+    db = conn;
+    conn = null;
+  } catch (e) {
+    lastEmbeddingStoreError = e instanceof Error ? e.message : String(e);
+    log.error("initializeEmbeddingVectorStore failed", e);
+    insertStmt = null;
+    db = null;
+    if (conn) {
+      try {
+        conn.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 export function closeEmbeddingVectorStore(): void {
@@ -121,9 +168,12 @@ export function closeEmbeddingVectorStore(): void {
 
 function ensureDb(): Database.Database {
   if (!db || !insertStmt) {
-    initializeEmbeddingVectorStore({ userDataDir: storeUserDataDir ?? undefined });
+    initializeEmbeddingVectorStore({});
   }
-  return db!;
+  if (!db || !insertStmt) {
+    throw new Error(lastEmbeddingStoreError ?? "embedding vector store not open");
+  }
+  return db;
 }
 
 function floatVectorFromSqlValue(v: unknown): number[] | null {
@@ -150,8 +200,10 @@ export type StoredEmbeddingRow = {
 /** Allocate next `rowid`, insert `body` + vector (length must equal `getEmbeddingVectorDimension()`). */
 export function saveEmbeddingText(body: string, embedding: number[]): number {
   const conn = ensureDb();
-  const trimmed = typeof body === "string" ? body.trim() : "";
-  if (!trimmed) {
+  if (typeof body !== "string") {
+    throw new Error("saveEmbeddingText: body must be string");
+  }
+  if (body.length === 0) {
     throw new Error("saveEmbeddingText: empty body");
   }
   if (!Array.isArray(embedding) || embedding.length !== vecDim) {
@@ -164,7 +216,7 @@ export function saveEmbeddingText(body: string, embedding: number[]): number {
       m: number | bigint;
     };
     const next = BigInt(maxRow.m) + 1n;
-    insertStmt!.run(next, vec, trimmed);
+    insertStmt!.run(next, vec, body);
     return Number(next);
   })();
 
@@ -202,6 +254,45 @@ export function listEmbeddingBodies(limit = 100): Array<{ rowid: number; body: s
     if (typeof r.body === "string") {
       out.push({ rowid: Number(r.rowid), body: r.body });
     }
+  }
+  return out;
+}
+
+export type EmbeddingSearchHit = {
+  rowid: number;
+  body: string;
+  distance: number;
+};
+
+/**
+ * sqlite-vec KNN on `embedding` column (default L2 distance).
+ * `queryEmbedding` length must match `getEmbeddingVectorDimension()`.
+ */
+export function searchEmbeddingSimilar(
+  queryEmbedding: number[] | Float32Array,
+  k: number,
+): EmbeddingSearchHit[] {
+  const conn = ensureDb();
+  const kk = Math.min(Math.max(Math.floor(k), 1), 500);
+  const raw =
+    queryEmbedding instanceof Float32Array ? queryEmbedding : Float32Array.from(queryEmbedding);
+  if (raw.length !== vecDim) {
+    throw new Error(`searchEmbeddingSimilar: expected length ${vecDim}, got ${raw.length}`);
+  }
+  const stmt = conn.prepare(
+    `SELECT rowid, body, distance FROM ${VEC_TABLE} WHERE embedding MATCH ? AND k = ?`,
+  );
+  const rows = stmt.all(raw, kk) as Array<{
+    rowid: unknown;
+    body: unknown;
+    distance: unknown;
+  }>;
+  const out: EmbeddingSearchHit[] = [];
+  for (const r of rows) {
+    if (typeof r.body !== "string") continue;
+    const dist = typeof r.distance === "number" ? r.distance : Number(r.distance);
+    if (!Number.isFinite(dist)) continue;
+    out.push({ rowid: Number(r.rowid), body: r.body, distance: dist });
   }
   return out;
 }

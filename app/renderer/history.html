@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob: data:; script-src 'self'; style-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AA · History</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="page-chat page-history">
+  <header class="top">
+    <nav class="nav" aria-label="Pages">
+      <a href="chat.html" class="nav__tab">Chat</a>
+      <a href="history.html" class="nav__tab is-active" aria-current="page">History</a>
+      <a href="embedding.html" class="nav__tab">Embeddings</a>
+      <a href="scheduler.html" class="nav__tab">Scheduler</a>
+      <a href="settings.html" class="nav__tab">Settings</a>
+    </nav>
+  </header>
+
+  <main class="history-layout">
+    <aside class="history-sidebar" aria-label="Sessions">
+      <div class="history-sidebar__head">
+        <span>Sessions</span>
+        <label class="history-gap">
+          Gap min
+          <input type="text" id="hist-gap-min" inputmode="numeric" value="60" title="Split sessions when gap between messages exceeds this many minutes" />
+        </label>
+      </div>
+      <div id="hist-session-list" class="history-session-list"></div>
+      <div class="history-sidebar__actions">
+        <button type="button" id="btn-hist-embed-session">Embed selected session</button>
+        <button type="button" id="btn-hist-embed-all">Embed full history</button>
+        <button type="button" id="btn-hist-import-chatgpt" title="Pick conversations.json or any conversations-NNN.json shard (folder auto-loaded)">
+          Import ChatGPT JSON
+        </button>
+      </div>
+      <p class="hint history-import-hint">
+        ChatGPT export folder: <strong>conversations.json</strong> (older) or <strong>conversations-000.json …</strong> shards (newer). Pick any one shard — app loads every <code>conversations-*.json</code> in that folder. Not user.json / feedback.
+      </p>
+      <p class="hint">
+        <strong>[ChatGPT]</strong> imports listed first (saved locally); below = this app’s transcript split by gap. Semantic search: Chat agent tool <strong>knowledge_search</strong>, or <strong>Embeddings</strong> tab Search.
+      </p>
+      <div class="embed-progress-row" id="hist-progress-wrap" hidden>
+        <progress id="hist-progress" max="100" value="0"></progress>
+        <span id="hist-progress-label" class="embed-progress-label" aria-live="polite"></span>
+      </div>
+      <p class="settings-status" id="hist-status" aria-live="polite"></p>
+    </aside>
+    <section class="history-main">
+      <div class="history-main__title" id="hist-session-title">Select a session</div>
+      <div id="hist-transcript" class="history-transcript" role="log"></div>
+    </section>
+  </main>
+  <script src="./history-page.js"></script>
+</body>
+</html>

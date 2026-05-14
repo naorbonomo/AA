@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; script-src 'self'; style-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AA · Embeddings</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="page-scheduler page--settings">
+  <header class="top">
+    <nav class="nav" aria-label="Pages">
+      <a href="chat.html" class="nav__tab">Chat</a>
+      <a href="history.html" class="nav__tab">History</a>
+      <a href="embedding.html" class="nav__tab is-active" aria-current="page">Embeddings</a>
+      <a href="scheduler.html" class="nav__tab">Scheduler</a>
+      <a href="settings.html" class="nav__tab">Settings</a>
+    </nav>
+  </header>
+
+  <main class="page page--settings">
+    <div class="col-head"><span>Embeddings (dev)</span></div>
+    <div class="settings-scroll">
+      <div class="settings-body">
+      <p class="hint">
+        Index text and optional image into sqlite-vec (same model + base URL as Settings → Embeddings). Search runs KNN over stored vectors.
+      </p>
+      <label class="field">
+        <span>Conversation id tag</span>
+        <input type="text" id="emb-dev-cid" spellcheck="false" autocomplete="off" value="dev-playground" />
+      </label>
+      <label class="field">
+        <span>Text</span>
+        <textarea id="emb-dev-text" rows="8" spellcheck="false" placeholder="Paste text to embed…"></textarea>
+      </label>
+      <label class="field">
+        <span>Image file (absolute path on disk)</span>
+        <input type="text" id="emb-dev-img-path" spellcheck="false" autocomplete="off" placeholder="/path/to/image.png" />
+      </label>
+      <p class="settings-card__meta">Main process reads image path with <code>fs.readFileSync</code> — paste path from Finder (macOS).</p>
+      <div class="settings-actions">
+        <button type="button" id="btn-emb-index">Index</button>
+      </div>
+
+      <hr class="embedding-divider" />
+
+      <label class="field">
+        <span>Search query text</span>
+        <textarea id="emb-search-q" rows="3" spellcheck="false" placeholder="Query…"></textarea>
+      </label>
+      <label class="field">
+        <span>Optional query image path</span>
+        <input type="text" id="emb-search-img" spellcheck="false" autocomplete="off" placeholder="/path/to/query-image.jpg" />
+      </label>
+      <label class="field">
+        <span>top K</span>
+        <input type="text" id="emb-search-k" inputmode="numeric" value="8" />
+      </label>
+      <div class="settings-actions">
+        <button type="button" id="btn-emb-search">Search</button>
+        <button type="button" id="btn-emb-list">Refresh list</button>
+      </div>
+      <p class="hint">
+        Same vector index as Chat agent tool <strong>knowledge_search</strong> (when agent/tools enabled). Type natural-language query → hits show stored envelope JSON + scores.
+      </p>
+
+      <div class="embed-progress-row" id="emb-progress-wrap" hidden>
+        <progress id="emb-progress" max="100" value="0"></progress>
+        <span id="emb-progress-label" class="embed-progress-label" aria-live="polite"></span>
+      </div>
+
+      <p class="settings-status" id="emb-status" aria-live="polite"></p>
+      <pre id="emb-results" class="embedding-results" aria-live="polite"></pre>
+      </div>
+    </div>
+  </main>
+  <script src="./embedding-page.js"></script>
+</body>
+</html>

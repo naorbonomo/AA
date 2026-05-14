@@ -1,5 +1,8 @@
 /** OpenAI-compatible `POST /v1/embeddings` — same Base URL + Bearer as Settings → LLM. */
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { getResolvedSettings } from "./settings-store.js";
 import { bearerTokenForLlm } from "./secrets-store.js";
 import { getLogger } from "../utils/logger.js";
@@ -100,39 +103,59 @@ function parseEmbeddingsJson(body: unknown): EmbeddingsResult {
   return { model, embeddings, usage };
 }
 
-export type CreateEmbeddingsArgs = {
-  /** Single string or batch (OpenAI `input`). */
-  input: string | string[];
-  /** Defaults to `AA_EMBEDDING_MODEL` or `DEFAULT_EMBEDDING_MODEL`. */
-  model?: string;
-  signal?: AbortSignal;
+/** UTF-16 code-unit slices that concatenate back to `s` exactly (lossless partition). */
+export function losslessUtf16Chunks(s: string, maxCodeUnits: number): string[] {
+  if (!Number.isFinite(maxCodeUnits) || maxCodeUnits < 1) {
+    throw new Error("losslessUtf16Chunks: maxCodeUnits must be >= 1");
+  }
+  if (s.length <= maxCodeUnits) return [s];
+  const out: string[] = [];
+  for (let i = 0; i < s.length; i += maxCodeUnits) {
+    out.push(s.slice(i, i + maxCodeUnits));
+  }
+  return out;
+}
+
+/** Override via `AA_EMBEDDING_LOSSLESS_CHUNK_CODE_UNITS` (min 1024). */
+export function resolvedLosslessChunkCodeUnits(): number {
+  const raw = process.env.AA_EMBEDDING_LOSSLESS_CHUNK_CODE_UNITS?.trim();
+  if (raw) {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 1024) return Math.floor(n);
+  }
+  return 80_000;
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
 };
 
-/**
- * POST `{ baseUrl }/v1/embeddings` with JSON `{ model, input }`.
- * Returns one vector per input string, ordered by response `index`.
- */
-export async function createEmbeddings(args: CreateEmbeddingsArgs): Promise<EmbeddingsResult> {
+/** Read image from disk → `data:image/...;base64,...` for multimodal embedding payloads. */
+export function absImageFileToDataUrl(absPath: string): string {
+  const ext = path.extname(absPath).toLowerCase();
+  const mime = MIME_BY_EXT[ext] ?? "application/octet-stream";
+  const buf = fs.readFileSync(absPath);
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
+export type EmbeddingMultimodalPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+async function postEmbeddingsRequest(
+  model: string,
+  input: unknown,
+  signal: AbortSignal,
+): Promise<EmbeddingsResult> {
   const s = getResolvedSettings();
   const base = String(s.llm.baseUrl || "").replace(/\/$/, "");
   if (!base.length) {
     throw new Error("Embeddings: LLM Base URL empty (Settings)");
   }
-  const model = resolvedEmbeddingModel(args.model);
-  const input = args.input;
-  if (typeof input === "string") {
-    if (!input.trim()) throw new Error("Embeddings: empty input string");
-  } else if (Array.isArray(input)) {
-    if (input.length === 0) throw new Error("Embeddings: empty input[]");
-    for (let i = 0; i < input.length; i += 1) {
-      if (typeof input[i] !== "string") {
-        throw new Error(`Embeddings: input[${i}] not a string`);
-      }
-    }
-  } else {
-    throw new Error("Embeddings: input must be string or string[]");
-  }
-
   const url = `${base}/v1/embeddings`;
   const bodyPayload = { model, input };
   const bodyStr = JSON.stringify(bodyPayload);
@@ -146,13 +169,13 @@ export async function createEmbeddings(args: CreateEmbeddingsArgs): Promise<Embe
     headers.Authorization = `Bearer ${key}`;
   }
 
-  const timeoutMs = s.llm.httpTimeoutMs;
-  const signal = args.signal ?? AbortSignal.timeout(timeoutMs);
+  const batchHint =
+    typeof input === "string" ? 1 : Array.isArray(input) ? input.length : typeof input === "object" ? 1 : 0;
 
   log.info("POST /v1/embeddings", {
     url,
     model,
-    batchSize: typeof input === "string" ? 1 : input.length,
+    batchSize: batchHint,
     authBearer: Boolean(key),
     bodyUtf8Bytes: Buffer.byteLength(bodyStr, "utf8"),
   });
@@ -182,4 +205,57 @@ export async function createEmbeddings(args: CreateEmbeddingsArgs): Promise<Embe
     usage: out.usage,
   });
   return out;
+}
+
+export type CreateEmbeddingsArgs = {
+  /** Single string or batch (OpenAI `input`). */
+  input: string | string[];
+  /** Defaults to `AA_EMBEDDING_MODEL` or `DEFAULT_EMBEDDING_MODEL`. */
+  model?: string;
+  signal?: AbortSignal;
+};
+
+/**
+ * POST `{ baseUrl }/v1/embeddings` with JSON `{ model, input }`.
+ * Returns one vector per input string, ordered by response `index`.
+ */
+export async function createEmbeddings(args: CreateEmbeddingsArgs): Promise<EmbeddingsResult> {
+  const s = getResolvedSettings();
+  const model = resolvedEmbeddingModel(args.model);
+  const input = args.input;
+  if (typeof input === "string") {
+    if (input.length === 0) throw new Error("Embeddings: empty input string");
+  } else if (Array.isArray(input)) {
+    if (input.length === 0) throw new Error("Embeddings: empty input[]");
+    for (let i = 0; i < input.length; i += 1) {
+      if (typeof input[i] !== "string") {
+        throw new Error(`Embeddings: input[${i}] not a string`);
+      }
+    }
+  } else {
+    throw new Error("Embeddings: input must be string or string[]");
+  }
+  const timeoutMs = s.llm.httpTimeoutMs;
+  const signal = args.signal ?? AbortSignal.timeout(timeoutMs);
+  return postEmbeddingsRequest(model, input, signal);
+}
+
+export type CreateEmbeddingMultimodalArgs = {
+  parts: EmbeddingMultimodalPart[];
+  model?: string;
+  signal?: AbortSignal;
+};
+
+/**
+ * Single multimodal document — `input` is chat-style `parts[]` (OpenAI-compatible servers may accept this on `/v1/embeddings`).
+ */
+export async function createEmbeddingFromParts(args: CreateEmbeddingMultimodalArgs): Promise<EmbeddingsResult> {
+  const s = getResolvedSettings();
+  if (!Array.isArray(args.parts) || args.parts.length === 0) {
+    throw new Error("Embeddings: multimodal parts[] required");
+  }
+  const model = resolvedEmbeddingModel(args.model);
+  const timeoutMs = s.llm.httpTimeoutMs;
+  const signal = args.signal ?? AbortSignal.timeout(timeoutMs);
+  return postEmbeddingsRequest(model, args.parts, signal);
 }

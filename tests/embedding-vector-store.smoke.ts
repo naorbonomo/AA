@@ -9,16 +9,22 @@ import path from "node:path";
 
 import {
   closeEmbeddingVectorStore,
+  getEmbeddingVectorStoreInitError,
   initializeEmbeddingVectorStore,
+  isEmbeddingVectorStoreReady,
   listEmbeddingBodies,
   loadEmbeddingRow,
   saveEmbeddingText,
+  searchEmbeddingSimilar,
 } from "../services/embedding-vector-store.js";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "aa-embed-"));
 process.env.AA_EMBEDDING_VEC_DIM = "8";
 
 initializeEmbeddingVectorStore({ userDataDir: tmp });
+if (!isEmbeddingVectorStoreReady()) {
+  throw new Error(getEmbeddingVectorStoreInitError() ?? "embedding store init failed");
+}
 
 const v = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
 const id = saveEmbeddingText("hello sqlite-vec", v);
@@ -30,6 +36,14 @@ for (let i = 0; i < v.length; i += 1) {
 }
 const listed = listEmbeddingBodies(10);
 if (listed.length !== 1 || listed[0].rowid !== id) throw new Error("list mismatch");
+
+const far = [0.9, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1];
+const id2 = saveEmbeddingText('{"v":1,"kind":"text","text":"beta"}', far);
+const nearQuery = [0.11, 0.21, 0.31, 0.41, 0.51, 0.61, 0.71, 0.81];
+const knn = searchEmbeddingSimilar(nearQuery, 2);
+if (knn.length < 2) throw new Error("knn expected 2 hits");
+if (knn[0].rowid !== id) throw new Error(`knn closest expected row ${id}, got ${knn[0].rowid}`);
+if (knn[0].distance > knn[1].distance) throw new Error("knn distance ordering");
 
 closeEmbeddingVectorStore();
 fs.rmSync(tmp, { recursive: true, force: true });

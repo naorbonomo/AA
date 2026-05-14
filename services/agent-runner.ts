@@ -16,6 +16,7 @@ import {
   executeYoutubeTranscribeTool,
   youtubeTranscribeOpenAiTool,
 } from "./youtube-transcribe-tool.js";
+import { executeKnowledgeSearchTool, knowledgeSearchOpenAiTool, peekKnowledgeQuery } from "./embedding-tool.js";
 import { getResolvedSettings } from "./settings-store.js";
 import { getLogger, logToolInfo } from "../utils/logger.js";
 
@@ -65,6 +66,15 @@ export type AgentStepPayload =
       backend?: string;
       preview?: string;
       error?: string;
+    }
+  | { kind: "knowledge_search"; status: "start"; query: string }
+  | {
+      kind: "knowledge_search";
+      status: "done";
+      query: string;
+      hitCount: number;
+      ok: boolean;
+      previewSummary?: string;
     };
 
 function mergeUsage(acc: ChatUsageSnapshot | undefined, next: ChatUsageSnapshot | undefined): ChatUsageSnapshot | undefined {
@@ -170,6 +180,7 @@ export async function runChatWithWebSearchTool(opts: {
       messages: msgs,
       tools: [
         webSearchOpenAiTool,
+        knowledgeSearchOpenAiTool,
         scheduleJobOpenAiTool,
         sttOpenAiTool,
         ttsOpenAiTool,
@@ -373,6 +384,34 @@ export async function runChatWithWebSearchTool(opts: {
         stepsOut.push(step);
         logToolInfo("schedule_job", "done", { round, ok, action: schedAction, summary });
         msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(result) });
+        continue;
+      }
+
+      if (name === "knowledge_search") {
+        const kq = peekKnowledgeQuery(rawArgs);
+        const stKs: AgentStepPayload = { kind: "knowledge_search", status: "start", query: kq };
+        opts.onStep?.(stKs);
+        stepsOut.push(stKs);
+
+        const ks = await executeKnowledgeSearchTool(rawArgs);
+        const hitCount = ks.ok && ks.hits ? ks.hits.length : 0;
+        let previewSummary: string | undefined;
+        if (ks.ok && ks.hits && ks.hits.length > 0) {
+          const b = ks.hits[0].body;
+          const head = b.replace(/\s+/g, " ").slice(0, 120);
+          previewSummary = `${head}${b.length > 120 ? "…" : ""}`;
+        }
+        const doneKs: AgentStepPayload = {
+          kind: "knowledge_search",
+          status: "done",
+          query: ks.query ?? kq,
+          hitCount,
+          ok: ks.ok,
+          previewSummary,
+        };
+        opts.onStep?.(doneKs);
+        stepsOut.push(doneKs);
+        msgs.push({ role: "tool", tool_call_id: id, content: JSON.stringify(ks) });
         continue;
       }
 

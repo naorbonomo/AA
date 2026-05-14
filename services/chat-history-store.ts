@@ -192,6 +192,123 @@ function normalizeRow(raw: unknown): ChatHistoryRow | null {
   return row;
 }
 
+/** Normalize row without trimming field lengths (embedding / archival). */
+function normalizeRowLossless(raw: unknown): ChatHistoryRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const role = typeof o.role === "string" ? o.role.trim().toLowerCase() : "";
+  if (role !== "user" && role !== "assistant" && role !== "system") return null;
+  const content = typeof o.content === "string" ? o.content : "";
+  const row: ChatHistoryRow = { role, content };
+  if (typeof o.atMs === "number" && Number.isFinite(o.atMs)) {
+    row.atMs = Math.floor(o.atMs);
+  }
+  if (typeof o.reasoning === "string" && o.reasoning.length) {
+    row.reasoning = o.reasoning;
+  }
+  if (typeof o.agentTrace === "string" && o.agentTrace.length) {
+    row.agentTrace = o.agentTrace;
+  }
+  if (o.usageMeta && typeof o.usageMeta === "object") {
+    const u = o.usageMeta as Record<string, unknown>;
+    const wallMs = typeof u.wallMs === "number" && Number.isFinite(u.wallMs) ? u.wallMs : 0;
+    const prompt_tokens =
+      u.prompt_tokens !== undefined && typeof u.prompt_tokens === "number" && Number.isFinite(u.prompt_tokens)
+        ? Math.floor(u.prompt_tokens)
+        : null;
+    const completion_tokens =
+      u.completion_tokens !== undefined && typeof u.completion_tokens === "number" && Number.isFinite(u.completion_tokens)
+        ? Math.floor(u.completion_tokens)
+        : null;
+    const total_tokens =
+      u.total_tokens !== undefined && typeof u.total_tokens === "number" && Number.isFinite(u.total_tokens)
+        ? Math.floor(u.total_tokens)
+        : null;
+    let reasoning_tokens: number | undefined;
+    if (u.reasoning_tokens !== undefined && typeof u.reasoning_tokens === "number" && Number.isFinite(u.reasoning_tokens)) {
+      reasoning_tokens = Math.floor(u.reasoning_tokens);
+    }
+    let msPerToken: number | null = null;
+    if (u.msPerToken !== undefined && typeof u.msPerToken === "number" && Number.isFinite(u.msPerToken)) {
+      msPerToken = u.msPerToken;
+    }
+    const meta: ChatHistoryUsageMeta = {
+      wallMs,
+      total_tokens,
+      prompt_tokens,
+      completion_tokens,
+      msPerToken,
+    };
+    if (reasoning_tokens !== undefined) meta.reasoning_tokens = reasoning_tokens;
+    if (typeof u.system_fingerprint === "string" && u.system_fingerprint.length) {
+      meta.system_fingerprint =
+        u.system_fingerprint.length > 256 ? u.system_fingerprint.slice(0, 256) : u.system_fingerprint;
+    }
+    row.usageMeta = meta;
+  }
+  if (o.errReply === true) {
+    row.errReply = true;
+  }
+  const src = o.source;
+  if (src === "app" || src === "telegram" || src === "scheduler") {
+    row.source = src;
+  }
+  if (o.telegramChatId !== undefined && typeof o.telegramChatId === "number" && Number.isFinite(o.telegramChatId)) {
+    row.telegramChatId = Math.floor(o.telegramChatId);
+  }
+  if (Array.isArray(o.displayAttachments)) {
+    const list: ChatHistoryAttachment[] = [];
+    for (const rawAtt of o.displayAttachments) {
+      if (!rawAtt || typeof rawAtt !== "object") continue;
+      const ao = rawAtt as Record<string, unknown>;
+      const name = typeof ao.name === "string" ? ao.name.trim() : "";
+      const k = ao.kind;
+      const kind: ChatHistoryAttachment["kind"] =
+        k === "audio" ? "audio" : k === "file" ? "file" : "image";
+      if (!name) continue;
+      const att: ChatHistoryAttachment = { name, kind };
+      const thumb = ao.thumbnailDataUrl;
+      if (typeof thumb === "string" && thumb.startsWith("data:") && thumb.length <= MAX_THUMB_DATA_URL) {
+        att.thumbnailDataUrl = thumb;
+      }
+      const sp = ao.savedPath;
+      if (typeof sp === "string" && sp.length > 0 && sp.length <= MAX_SAVED_PATH_CHARS) {
+        att.savedPath = sp;
+      }
+      list.push(att);
+    }
+    if (list.length) {
+      row.displayAttachments = list;
+    }
+  }
+  if (Array.isArray(o.agentTtsClips)) {
+    const clips: ChatHistoryTtsClip[] = [];
+    for (const rawClip of o.agentTtsClips) {
+      if (clips.length >= MAX_TTS_CLIPS_PER_ROW) {
+        break;
+      }
+      if (!rawClip || typeof rawClip !== "object") {
+        continue;
+      }
+      const co = rawClip as Record<string, unknown>;
+      const dataUrl = typeof co.dataUrl === "string" ? co.dataUrl : "";
+      if (!dataUrl.startsWith("data:audio/") || dataUrl.length > MAX_TTS_CLIP_DATA_URL) {
+        continue;
+      }
+      clips.push({ dataUrl });
+    }
+    if (clips.length) {
+      row.agentTtsClips = clips;
+    }
+  }
+  return row;
+}
+
+/** Parse one disk/UI row without clamping long fields — same rules as `normalizeRow` minus `MAX_FIELD`. */
+export function parseChatHistoryRowLossless(raw: unknown): ChatHistoryRow | null {
+  return normalizeRowLossless(raw);
+}
+
 export function readChatHistory(): ChatHistoryRow[] {
   const p = getChatHistoryFilePath();
   let raw: unknown;
@@ -205,6 +322,26 @@ export function readChatHistory(): ChatHistoryRow[] {
   const out: ChatHistoryRow[] = [];
   for (const item of raw) {
     const row = normalizeRow(item);
+    if (row) out.push(row);
+    if (out.length >= MAX_ROWS) break;
+  }
+  return out;
+}
+
+/** Same disk file as `readChatHistory` but **does not** clamp `content` / `reasoning` / `agentTrace` — use for embeddings indexing only. */
+export function readChatHistoryLossless(): ChatHistoryRow[] {
+  const p = getChatHistoryFilePath();
+  let raw: unknown;
+  try {
+    const text = fs.readFileSync(p, "utf8");
+    raw = JSON.parse(text) as unknown;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
+  const out: ChatHistoryRow[] = [];
+  for (const item of raw) {
+    const row = normalizeRowLossless(item);
     if (row) out.push(row);
     if (out.length >= MAX_ROWS) break;
   }

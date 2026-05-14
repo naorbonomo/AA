@@ -8,6 +8,12 @@ contextBridge.exposeInMainWorld("aaDesktop", {
   chatHistoryGet() {
     return ipcRenderer.invoke("chat-history:get");
   },
+  chatHistoryGetLossless() {
+    return ipcRenderer.invoke("chat-history:get-lossless");
+  },
+  importedChatSessionsGetLossless() {
+    return ipcRenderer.invoke("imported-chat:get-lossless");
+  },
   chatHistorySave(rows) {
     return ipcRenderer.invoke("chat-history:save", rows);
   },
@@ -70,6 +76,35 @@ contextBridge.exposeInMainWorld("aaDesktop", {
   /** `{ query, maxResults? }` → `webSearch` JSON result `{ ok, ... }`. */
   webSearch(payload) {
     return ipcRenderer.invoke("tools:webSearch", payload);
+  },
+  embeddingIndexConversation(payload) {
+    return ipcRenderer.invoke("embedding:indexConversation", payload);
+  },
+  embeddingIndexDev(payload) {
+    return ipcRenderer.invoke("embedding:indexDev", payload);
+  },
+  embeddingSearch(payload) {
+    return ipcRenderer.invoke("embedding:search", payload);
+  },
+  embeddingList(payload) {
+    return ipcRenderer.invoke("embedding:list", payload ?? {});
+  },
+  embeddingImportChatgpt() {
+    return ipcRenderer.invoke("embedding:importChatgpt");
+  },
+  /** @param {(p: unknown) => void} handler @returns {() => void} unsubscribe */
+  onEmbeddingIndexProgress(handler) {
+    const wrapped = (_e, p) => {
+      if (typeof handler === "function") {
+        try {
+          handler(p);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    };
+    ipcRenderer.on("embedding:index-progress", wrapped);
+    return () => ipcRenderer.removeListener("embedding:index-progress", wrapped);
   },
   /** Agent loop (web_search, schedule_job, stt, tts, youtube_transcribe); `onStep({ kind, status, ... })`, optional `onStreamDelta({ reasoning?, content? })`. */
   schedulerList() {
