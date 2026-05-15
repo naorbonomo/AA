@@ -182,23 +182,3 @@ export async function searchKnowledgeEnhanced(opts: {
   };
 }
 
-export function buildKnowledgeCuratorSystemPrompt(userQuery: string, excerpts: string[]): string {
-  const bullets = excerpts.map((ctx) => `• ${ctx}`).join("\n");
-  return `You help answer questions using excerpts from the user's locally embedded chat history (imports + indexed conversations).
-
-IMPORTANT:
-1. Base answers on provided excerpts; if they lack needed info, say so clearly.
-2. Prefer step-by-step structure when explaining procedures.
-3. Quote or paraphrase tightly; don't invent messages not supported by excerpts.
-
-USER QUESTION:
-${userQuery}
-
-RELEVANT EXCERPTS:
-${bullets}
-
-RESPONSE FORMAT:
-- Start with direct answer.
-- Reference which excerpt themes/sessions apply when useful.
-- If excerpts insufficient, say what is missing.`;
-}

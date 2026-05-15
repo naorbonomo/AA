@@ -9,24 +9,13 @@ import { normalizeFactCategory, normalizeFactKey, upsertFactWithDedup } from "./
 import { readImportedChatSessionsLossless } from "./imported-chat-sessions-store.js";
 import { readChatHistoryLossless } from "./chat-history-store.js";
 import { getLogger } from "../utils/logger.js";
+import {
+  USER_FACT_EXTRACTION_SYSTEM,
+  USER_MEMORY_MD_SYSTEM,
+  buildUserProfileSynthesisSystemContent,
+} from "./llm-task-system-prompts.js";
 
 const log = getLogger("user-memory-pipeline");
-
-const EXTRACTION_SYSTEM = `You extract durable facts about the USER only from one chat exchange (previous user message + assistant reply).
-
-Rules:
-- Respond with JSON object shaped { "facts": Fact[] } where Fact has:
-  key (string, snake_case),
-  value (string, concise),
-  confidence (number 0..1),
-  category (exactly one of: identity, preference, behavior, goal, relationship, context),
-  source_turn_id (string — copy from input verbatim).
-- If nothing clearly describes the user, return { "facts": [] }.
-- Ignore facts about the assistant, third parties unless they describe user's relationship to them (then category relationship).
-- Never invent; skip uncertain items.
-
-Your stack may emit reasoning or tags before/after the JSON; the app strips those and parses the facts object (response_format still expects JSON).
-`;
 
 /** Remove common inline thinking blocks so brace-scan can find { "facts": … }. */
 function stripThinkingNoise(s: string): string {
@@ -149,7 +138,8 @@ export function parseFactsJson(raw: string): ParsedExtractedFact[] {
     const key = normalizeFactKey(typeof o.key === "string" ? o.key : "");
     const value = typeof o.value === "string" ? o.value.trim() : "";
     let confidence = Number(o.confidence);
-    if (!Number.isFinite(confidence)) confidence = 0.5;
+    if (!Number.isFinite(confidence)) continue;
+    if (confidence < 0.6) continue;
     const catRaw = typeof o.category === "string" ? o.category : "";
     const sid = typeof o.source_turn_id === "string" ? o.source_turn_id.trim() : "";
     if (!key.length || !value.length || !normalizeFactCategory(catRaw)) continue;
@@ -178,7 +168,7 @@ export async function extractFactsFromExchange(opts: {
   try {
     text = await chatCompletion({
       messages: [
-        { role: "system", content: EXTRACTION_SYSTEM },
+        { role: "system", content: USER_FACT_EXTRACTION_SYSTEM },
         { role: "user", content: JSON.stringify(payload) },
       ],
       temperature: 0.2,
@@ -276,14 +266,7 @@ export function buildProfileSynthesisPrompt(opts: {
     opts.hits.length > 0
       ? opts.hits.map((h, i) => `${i + 1}. ${hitToContextString(h)}`).join("\n\n")
       : "(no semantic excerpts retrieved — rely on facts above)";
-  const system = `You synthesize an accurate, helpful profile answer about the user.
-
-Rules:
-- Combine structured facts with conversation excerpts when relevant.
-- Be concise but informative; use Markdown bullets where helpful.
-- If excerpts contradict facts, mention uncertainty briefly.
-- Do not invent traits not supported by facts or excerpts.
-${opts.corpusNote ?? ""}`;
+  const system = buildUserProfileSynthesisSystemContent(opts.corpusNote);
   const user = `User asked (intent: profile / self-summary):\n"${opts.userQuestion}"\n\nStructured facts (confidence descending):\n${factLines}\n\nTop semantic excerpts from indexed conversation history:\n${excerptLines}`;
   return { system, user };
 }
@@ -313,17 +296,6 @@ export async function streamProfileSynthesis(opts: {
   return { text: acc.trim(), wallMs: out.wallMs, usage: out.usage };
 }
 
-const MEMORY_MD_SYSTEM = `You consolidate USER memory FACTS into one Markdown document (will be saved as memory.md).
-
-Rules:
-- Output Markdown only (no JSON). Start with a single top-level title: # User memory
-- Organize with ## / ### headings by theme or by fact category when that reads well.
-- Merge duplicates and near-duplicates; when two fact values conflict, prefer higher confidence and briefly note uncertainty.
-- Use bullets where helpful; stay concise; do not invent traits not supported by the input facts.
-- Optional small "Sources" section listing source_turn_id values if useful (truncate very long ids).
-
-Reasoning may appear outside the doc in your stack; still produce the markdown document as the main user-visible content.`;
-
 /** Strip thinking noise, optional ```md ... ``` wrapper, trim. */
 function stripMemoryMdCompletion(raw: string): string {
   const cleaned = stripThinkingNoise(raw.trim());
@@ -347,7 +319,7 @@ export async function synthesizeMemoryMarkdownFromFacts(facts: StoredUserFact[])
   try {
     text = await chatCompletion({
       messages: [
-        { role: "system", content: MEMORY_MD_SYSTEM },
+        { role: "system", content: USER_MEMORY_MD_SYSTEM },
         { role: "user", content: `Facts JSON:\n${JSON.stringify(bundle)}` },
       ],
       temperature: 0.35,

@@ -93,11 +93,8 @@ import {
   indexDevEmbeddingPayload,
   searchEmbeddingCorpus,
 } from "../../services/conversation-embeddings.js";
-import {
-  buildKnowledgeCuratorSystemPrompt,
-  hitToContextString,
-  searchKnowledgeEnhanced,
-} from "../../services/knowledge-search-curate.js";
+import { hitToContextString, searchKnowledgeEnhanced } from "../../services/knowledge-search-curate.js";
+import { buildKnowledgeCuratorSystemPrompt } from "../../services/llm-task-system-prompts.js";
 import { parseClaudeExport, type ParsedClaudeConversation } from "../../services/claude-export-parse.js";
 import { parseChatgptExport, type ParsedChatgptConversation } from "../../services/chatgpt-export-parse.js";
 import {
