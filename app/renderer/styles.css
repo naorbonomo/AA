@@ -1757,6 +1757,40 @@ body {
   margin-top: -0.15rem;
 }
 
+.page-memory .memory-md-preview-card {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-card);
+  background: linear-gradient(180deg, #14141c 0%, var(--panel) 100%);
+}
+
+.page-memory .memory-md-preview-card[hidden] {
+  display: none !important;
+}
+
+.page-memory .memory-md-preview-status {
+  margin: 0 0 0.5rem;
+  font-size: 86%;
+  color: var(--muted);
+}
+
+.page-memory .memory-md-preview-body {
+  margin: 0;
+  max-height: min(52vh, 28rem);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 0.65rem 0.75rem;
+  background: #0c0c12;
+  border-radius: 6px;
+  border: var(--hairline) solid var(--border);
+  color: var(--text);
+}
+
 .page-memory .memory-checkbox {
   display: flex;
   align-items: flex-start;

@@ -95,6 +95,33 @@ Rules:
 
 Reasoning may appear outside the doc in your stack; still produce the markdown document as the main user-visible content.`;
 
+/** Map phase: one chunk of facts → markdown fragment (no top-level `# User memory`). */
+export const USER_MEMORY_MD_CHUNK_SYSTEM = `You convert ONE batch of USER memory FACTS (JSON array) into Markdown sections.
+
+Rules:
+- Output Markdown only (no JSON).
+- Do NOT include the top-level title "# User memory" — this is a fragment; start at ## or ### only.
+- Organize by theme or fact category; use bullets where helpful; stay concise.
+- Merge duplicates and near-duplicates within this batch only; on conflicting values prefer higher confidence (from JSON) and briefly note uncertainty.
+- Do not invent traits not supported by these facts.
+- Optional per-section "Sources" lines with source_turn_id values if useful (truncate very long ids).
+
+Reasoning may appear outside the fragment; the fragment body must be plain Markdown.`;
+
+/** Reduce phase: merge non-overlapping fragments into final memory.md body. */
+export const USER_MEMORY_MD_MERGE_SYSTEM = `You merge several Markdown fragments into ONE USER memory document (will be saved as memory.md).
+
+Each fragment was generated from a disjoint subset of the same fact database; together they cover the full set.
+
+Rules:
+- Output Markdown only (no JSON). Start with a single top-level title: # User memory
+- Deduplicate and reconcile across fragments; when facts conflict, prefer stronger / higher-confidence phrasing and briefly note uncertainty when needed.
+- Restructure headings for clarity; avoid repeating the same bullet verbatim from multiple fragments.
+- Do not invent content not grounded in the fragments.
+- Keep optional Sources sections minimal; dedupe ids.
+
+Reasoning may appear outside the doc in your stack; still produce the markdown document as the main user-visible content.`;
+
 export function buildKnowledgeCuratorSystemPrompt(userQuery: string, excerpts: string[]): string {
   const bullets = excerpts.map((ctx) => `• ${ctx}`).join("\n");
   return `You help answer questions using excerpts from the user's locally embedded chat history (imports + indexed conversations).

@@ -11,6 +11,8 @@ import { readChatHistoryLossless } from "./chat-history-store.js";
 import { getLogger } from "../utils/logger.js";
 import {
   USER_FACT_EXTRACTION_SYSTEM,
+  USER_MEMORY_MD_CHUNK_SYSTEM,
+  USER_MEMORY_MD_MERGE_SYSTEM,
   USER_MEMORY_MD_SYSTEM,
   buildUserProfileSynthesisSystemContent,
 } from "./llm-task-system-prompts.js";
@@ -279,7 +281,8 @@ export async function streamProfileSynthesis(opts: {
   onDelta: (d: StreamDelta) => void;
 }): Promise<{ text: string; wallMs: number; usage?: ChatUsageSnapshot }> {
   const { system, user } = buildProfileSynthesisPrompt(opts);
-  let acc = "";
+  let accContent = "";
+  let accReasoning = "";
   const out = await streamChatCompletion(
     {
       messages: [
@@ -289,11 +292,13 @@ export async function streamProfileSynthesis(opts: {
       temperature: 0.4,
     },
     (d) => {
-      if (typeof d.content === "string") acc += d.content;
+      if (typeof d.content === "string") accContent += d.content;
+      if (typeof d.reasoning === "string") accReasoning += d.reasoning;
       opts.onDelta(d);
     },
   );
-  return { text: acc.trim(), wallMs: out.wallMs, usage: out.usage };
+  const text = (accContent.trim() || accReasoning.trim()).trim();
+  return { text, wallMs: out.wallMs, usage: out.usage };
 }
 
 /** Strip thinking noise, optional ```md ... ``` wrapper, trim. */
@@ -305,32 +310,213 @@ function stripMemoryMdCompletion(raw: string): string {
   return x.trim();
 }
 
-/** One-shot LLM pass: cohesive memory.md body from SQLite facts (confidence-ordered input list). */
-export async function synthesizeMemoryMarkdownFromFacts(facts: StoredUserFact[]): Promise<string> {
-  if (!facts.length) return "";
-  const bundle = facts.map((f) => ({
+/** Avoid giant single-row payloads in memory.md synthesis (bundle-only; DB unchanged). */
+const MEMORY_BUNDLE_VALUE_MAX_CHARS = 24_000;
+
+/** UTF-8 budget for one map-phase user message (`Facts JSON:\n` + array). */
+const MEMORY_MD_CHUNK_JSON_MAX_UTF8 = 220_000;
+
+/** UTF-8 budget for one merge-phase user message (intro + fragments). */
+const MEMORY_MD_MERGE_USER_MAX_UTF8 = 240_000;
+
+const MEMORY_MD_COMPLETION_MAX_TOKENS = 16_384;
+
+const MERGE_FRAGMENT_SEPARATOR = "\n\n---\n\n";
+
+const FACTS_JSON_USER_PREFIX = "Facts JSON:\n";
+const FACTS_JSON_PREFIX_UTF8 = Buffer.byteLength(FACTS_JSON_USER_PREFIX, "utf8");
+
+function memoryBundleFromFact(f: StoredUserFact): {
+  key: string;
+  value: string;
+  confidence: number;
+  category: string;
+  source_turn_id: string;
+} {
+  let value = f.value;
+  if (value.length > MEMORY_BUNDLE_VALUE_MAX_CHARS) {
+    value = `${value.slice(0, MEMORY_BUNDLE_VALUE_MAX_CHARS)}… [truncated]`;
+  }
+  return {
     key: f.key,
-    value: f.value,
+    value,
     confidence: f.confidence,
     category: f.category,
     source_turn_id: f.source_turn_id,
-  }));
-  let text: string;
-  try {
-    text = await chatCompletion({
-      messages: [
-        { role: "system", content: USER_MEMORY_MD_SYSTEM },
-        { role: "user", content: `Facts JSON:\n${JSON.stringify(bundle)}` },
-      ],
-      temperature: 0.35,
+  };
+}
+
+function chunkFactsByJsonUtf8Budget(facts: StoredUserFact[], maxUtf8Bytes: number): StoredUserFact[][] {
+  const chunks: StoredUserFact[][] = [];
+  let i = 0;
+  while (i < facts.length) {
+    const chunk: StoredUserFact[] = [];
+    while (i < facts.length) {
+      const next = facts[i];
+      const trial = [...chunk, next];
+      const bytes =
+        FACTS_JSON_PREFIX_UTF8 +
+        Buffer.byteLength(JSON.stringify(trial.map(memoryBundleFromFact)), "utf8");
+      if (bytes > maxUtf8Bytes) {
+        if (chunk.length > 0) break;
+        chunk.push(next);
+        i += 1;
+        break;
+      }
+      chunk.push(next);
+      i += 1;
+    }
+    chunks.push(chunk);
+  }
+  return chunks;
+}
+
+function packFragmentsForMerge(fragments: string[]): string[][] {
+  const intro =
+    "The following Markdown fragments were each built from a disjoint batch of user facts. Merge them into one cohesive document.\n\n";
+  const introBytes = Buffer.byteLength(intro, "utf8");
+  const sepBytes = Buffer.byteLength(MERGE_FRAGMENT_SEPARATOR, "utf8");
+  const batches: string[][] = [];
+  let cur: string[] = [];
+  let bodyBytes = 0;
+  for (const frag of fragments) {
+    const fBytes = Buffer.byteLength(frag, "utf8");
+    const bump = cur.length === 0 ? fBytes : sepBytes + fBytes;
+    if (introBytes + bodyBytes + bump > MEMORY_MD_MERGE_USER_MAX_UTF8 && cur.length > 0) {
+      batches.push(cur);
+      cur = [frag];
+      bodyBytes = fBytes;
+    } else {
+      bodyBytes += bump;
+      cur.push(frag);
+    }
+  }
+  if (cur.length) batches.push(cur);
+  return batches;
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Math.min(Math.max(1, limit), items.length);
+  async function worker(): Promise<void> {
+    for (;;) {
+      const idx = next;
+      next += 1;
+      if (idx >= items.length) break;
+      results[idx] = await fn(items[idx], idx);
+    }
+  }
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+  return results;
+}
+
+function ensureUserMemoryTopTitle(md: string): string {
+  const t = md.trim();
+  if (/^#\s+User memory\b/m.test(t)) return t;
+  return `# User memory\n\n${t}`;
+}
+
+async function synthesizeOneShotMemoryMd(bundle: ReturnType<typeof memoryBundleFromFact>[]): Promise<string> {
+  const text = await chatCompletion({
+    messages: [
+      { role: "system", content: USER_MEMORY_MD_SYSTEM },
+      { role: "user", content: `${FACTS_JSON_USER_PREFIX}${JSON.stringify(bundle)}` },
+    ],
+    temperature: 0.35,
+    maxTokens: MEMORY_MD_COMPLETION_MAX_TOKENS,
+  });
+  return ensureUserMemoryTopTitle(stripMemoryMdCompletion(text));
+}
+
+async function synthesizeMemoryMdChunk(bundle: ReturnType<typeof memoryBundleFromFact>[]): Promise<string> {
+  const text = await chatCompletion({
+    messages: [
+      { role: "system", content: USER_MEMORY_MD_CHUNK_SYSTEM },
+      { role: "user", content: `${FACTS_JSON_USER_PREFIX}${JSON.stringify(bundle)}` },
+    ],
+    temperature: 0.35,
+    maxTokens: MEMORY_MD_COMPLETION_MAX_TOKENS,
+  });
+  return stripMemoryMdCompletion(text);
+}
+
+export type MemoryMdWriteProgress =
+  | { phase: "start"; factCount: number; chunkCount: number }
+  | { phase: "chunk_done"; index: number; total: number; fragment: string }
+  | { phase: "merge_round"; round: number; partsRemaining: number; previewMarkdown: string }
+  | { phase: "complete"; markdown: string };
+
+async function mergeMemoryMdFragments(
+  fragments: string[],
+  onMergeProgress?: (p: Extract<MemoryMdWriteProgress, { phase: "merge_round" }>) => void,
+): Promise<string> {
+  let cur = fragments.map((f) => f.trim()).filter(Boolean);
+  if (!cur.length) return "";
+  const intro =
+    "The following Markdown fragments were each built from a disjoint batch of user facts. Merge them into one cohesive document.\n\n";
+  let round = 0;
+  while (cur.length > 1) {
+    round += 1;
+    const batches = packFragmentsForMerge(cur);
+    const merged = await mapWithConcurrency(batches, 2, async (batch) => {
+      const user = `${intro}${batch.join(MERGE_FRAGMENT_SEPARATOR)}`;
+      const text = await chatCompletion({
+        messages: [
+          { role: "system", content: USER_MEMORY_MD_MERGE_SYSTEM },
+          { role: "user", content: user },
+        ],
+        temperature: 0.25,
+        maxTokens: MEMORY_MD_COMPLETION_MAX_TOKENS,
+      });
+      return stripMemoryMdCompletion(text);
     });
+    cur = merged;
+    const previewMarkdown =
+      cur.length === 1
+        ? ensureUserMemoryTopTitle(cur[0] ?? "")
+        : `# User memory (merging — ${cur.length} part(s) after round ${round})\n\n${cur.join(MERGE_FRAGMENT_SEPARATOR)}`;
+    onMergeProgress?.({ phase: "merge_round", round, partsRemaining: cur.length, previewMarkdown });
+  }
+  return ensureUserMemoryTopTitle(cur[0] ?? "");
+}
+
+/**
+ * Builds memory.md body from SQLite facts (confidence-ordered).
+ * Large fact sets: map (chunked JSON batches) → merge tree so prompt stays under model context.
+ */
+export async function synthesizeMemoryMarkdownFromFacts(
+  facts: StoredUserFact[],
+  opts?: { onProgress?: (p: MemoryMdWriteProgress) => void },
+): Promise<string> {
+  const onProgress = opts?.onProgress;
+  if (!facts.length) return "";
+  const chunks = chunkFactsByJsonUtf8Budget(facts, MEMORY_MD_CHUNK_JSON_MAX_UTF8);
+  log.info("synthesizeMemoryMarkdownFromFacts", { factCount: facts.length, chunkCount: chunks.length });
+  try {
+    onProgress?.({ phase: "start", factCount: facts.length, chunkCount: chunks.length });
+    if (chunks.length === 1) {
+      const bundle = chunks[0].map(memoryBundleFromFact);
+      const text = await synthesizeOneShotMemoryMd(bundle);
+      onProgress?.({ phase: "chunk_done", index: 0, total: 1, fragment: text });
+      onProgress?.({ phase: "complete", markdown: text });
+      return text;
+    }
+    const fragments = await mapWithConcurrency(chunks, 3, async (batch, idx) => {
+      const bundle = batch.map(memoryBundleFromFact);
+      const frag = await synthesizeMemoryMdChunk(bundle);
+      onProgress?.({ phase: "chunk_done", index: idx, total: chunks.length, fragment: frag });
+      return frag;
+    });
+    const body = await mergeMemoryMdFragments(fragments, onProgress);
+    onProgress?.({ phase: "complete", markdown: body });
+    return body;
   } catch (e) {
-    log.warn("synthesizeMemoryMarkdownFromFacts chatCompletion failed", {
+    log.warn("synthesizeMemoryMarkdownFromFacts failed", {
       msg: e instanceof Error ? e.message : String(e),
     });
     throw e;
   }
-  return stripMemoryMdCompletion(text);
 }
 
 export type HarvestProgressPayload = {

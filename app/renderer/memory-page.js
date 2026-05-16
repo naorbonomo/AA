@@ -13,6 +13,9 @@
   /** @type {HTMLSelectElement | null} */
   const selHarvestConc = document.getElementById("mem-harvest-concurrency");
   const resumeHintEl = document.getElementById("mem-harvest-resume-hint");
+  const mdPreviewCard = document.getElementById("mem-md-preview-card");
+  const mdPreviewStatus = document.getElementById("mem-md-preview-status");
+  const mdPreviewBody = document.getElementById("mem-md-preview-body");
 
   const RESUME_KEY = "aa-memory-harvest-resume-v1";
 
@@ -22,6 +25,11 @@
   let mdWriteBusy = false;
   let harvestCur = { step: 0, total: 0 };
   let factsReloadTimer = null;
+  /** @type {string[]} */
+  let mdChunkSlots = [];
+  let mdChunkTotal = 0;
+  /** @type {"idle"|"chunks"|"merge"|"done"} */
+  let mdSynthPhase = "idle";
 
   function setStatus(msg) {
     if (statusEl) statusEl.textContent = msg || "";
@@ -126,6 +134,80 @@
   function setMdWriteBusy(b) {
     mdWriteBusy = b;
     syncMemoryLlmutex();
+  }
+
+  /** @param {unknown[]} slots @param {number} total */
+  function draftMarkdownFromChunkSlots(slots, total) {
+    let done = 0;
+    const parts = [];
+    for (let i = 0; i < total; i += 1) {
+      const f = slots[i];
+      if (typeof f === "string" && f.length) done += 1;
+      parts.push(`### Draft fragment ${i + 1} / ${total}\n\n${typeof f === "string" && f.length ? f : "…"}`);
+    }
+    return `# User memory (draft — ${done} / ${total} fact batches)\n\n${parts.join("\n\n---\n\n")}`;
+  }
+
+  /** @param {unknown} p */
+  function handleMemoryWriteProgress(p) {
+    if (!p || typeof p !== "object") return;
+    const o = /** @type {Record<string, unknown>} */ (p);
+    const phase = typeof o.phase === "string" ? o.phase : "";
+    if (phase === "start") {
+      mdSynthPhase = "chunks";
+      const c = o.chunkCount;
+      mdChunkTotal = typeof c === "number" && c > 0 ? Math.floor(c) : 1;
+      mdChunkSlots = new Array(mdChunkTotal);
+      if (mdPreviewCard instanceof HTMLElement) mdPreviewCard.hidden = false;
+      if (mdPreviewStatus) mdPreviewStatus.textContent = `${o.factCount ?? "?"} facts → ${mdChunkTotal} LLM batch(es)…`;
+      if (mdPreviewBody) mdPreviewBody.textContent = "…";
+      return;
+    }
+    if (phase === "chunk_done") {
+      const ix = o.index;
+      const tot = o.total;
+      const frag = o.fragment;
+      if (typeof tot === "number" && tot > 0) mdChunkTotal = Math.floor(tot);
+      if (!Array.isArray(mdChunkSlots) || mdChunkSlots.length !== mdChunkTotal) {
+        mdChunkSlots = new Array(mdChunkTotal);
+      }
+      if (typeof ix === "number" && ix >= 0 && ix < mdChunkTotal && typeof frag === "string") {
+        mdChunkSlots[ix] = frag;
+      }
+      if (mdSynthPhase === "chunks" && mdPreviewBody) {
+        mdPreviewBody.textContent = draftMarkdownFromChunkSlots(mdChunkSlots, mdChunkTotal);
+        let done = 0;
+        for (let i = 0; i < mdChunkTotal; i += 1) {
+          if (typeof mdChunkSlots[i] === "string" && mdChunkSlots[i].length) done += 1;
+        }
+        if (mdPreviewStatus)
+          mdPreviewStatus.textContent =
+            mdChunkTotal > 1
+              ? `Chunk LLM: ${done} / ${mdChunkTotal} — then merge`
+              : `Single batch — finalizing`;
+      }
+      return;
+    }
+    if (phase === "merge_round") {
+      mdSynthPhase = "merge";
+      const r = o.round;
+      const rem = o.partsRemaining;
+      const md = o.previewMarkdown;
+      if (mdPreviewStatus) {
+        const bits = [];
+        if (typeof r === "number") bits.push(`merge round ${r}`);
+        if (typeof rem === "number") bits.push(`${rem} part(s) left`);
+        mdPreviewStatus.textContent = bits.length ? bits.join(" · ") : "Merging…";
+      }
+      if (mdPreviewBody && typeof md === "string") mdPreviewBody.textContent = md;
+      return;
+    }
+    if (phase === "complete") {
+      mdSynthPhase = "done";
+      const md = o.markdown;
+      if (mdPreviewBody && typeof md === "string") mdPreviewBody.textContent = md;
+      if (mdPreviewStatus) mdPreviewStatus.textContent = "Final body (HTML comment header added on disk).";
+    }
   }
 
   function renderFacts(facts) {
@@ -293,6 +375,17 @@
       }
       setMdWriteBusy(true);
       setStatus("Writing memory.md via LLM…");
+      mdSynthPhase = "idle";
+      mdChunkSlots = [];
+      mdChunkTotal = 0;
+      if (mdPreviewCard instanceof HTMLElement) mdPreviewCard.hidden = true;
+      if (mdPreviewStatus) mdPreviewStatus.textContent = "";
+      if (mdPreviewBody) mdPreviewBody.textContent = "";
+      /** @type {() => void} */
+      let unsub = () => {};
+      if (typeof aa.onMemoryWriteMdProgress === "function") {
+        unsub = aa.onMemoryWriteMdProgress(handleMemoryWriteProgress);
+      }
       try {
         const r = /** @type {{ ok?: boolean, path?: string, factCount?: number, error?: string }} */ (
           await aa.memoryWriteMd()
@@ -307,6 +400,7 @@
       } catch (e) {
         setStatus(e instanceof Error ? e.message : String(e));
       } finally {
+        unsub();
         setMdWriteBusy(false);
       }
     });

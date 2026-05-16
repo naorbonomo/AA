@@ -153,6 +153,20 @@ contextBridge.exposeInMainWorld("aaDesktop", {
     ipcRenderer.on("memory:harvest-progress", wrapped);
     return () => ipcRenderer.removeListener("memory:harvest-progress", wrapped);
   },
+  /** Live `memory.md` synthesis: chunk map + merge rounds (`memory:write-md-progress`). */
+  onMemoryWriteMdProgress(handler) {
+    const wrapped = (_e, p) => {
+      if (typeof handler === "function") {
+        try {
+          handler(p);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    };
+    ipcRenderer.on("memory:write-md-progress", wrapped);
+    return () => ipcRenderer.removeListener("memory:write-md-progress", wrapped);
+  },
   schedulerList() {
     return ipcRenderer.invoke("scheduler:list");
   },

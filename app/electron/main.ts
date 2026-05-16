@@ -381,13 +381,19 @@ ipcMain.handle("memory:clear", () => {
   }
 });
 
-ipcMain.handle("memory:write-md", async () => {
+ipcMain.handle("memory:write-md", async (event) => {
+  const wc = event.sender;
+  const sendProgress = (p: unknown) => {
+    if (!wc.isDestroyed()) {
+      wc.send("memory:write-md-progress", p);
+    }
+  };
   try {
     const facts = listFacts();
     if (!facts.length) {
       return { ok: false as const, error: "No facts stored — harvest or chat first." };
     }
-    const body = await synthesizeMemoryMarkdownFromFacts(facts);
+    const body = await synthesizeMemoryMarkdownFromFacts(facts, { onProgress: sendProgress });
     if (!body.trim().length) {
       return { ok: false as const, error: "LLM returned empty document." };
     }

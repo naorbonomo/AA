@@ -29,7 +29,7 @@
           Profile-style questions in Chat route here using stored facts + embedding index when available.
         </p>
         <p class="hint memory-hint-secondary">
-          <code>memory.md</code> is written next to <code>aa-user-memory.sqlite</code> (app userData) — one LLM pass over current fact rows. Use Export to copy it anywhere.
+          <code>memory.md</code> lives next to <code>aa-user-memory.sqlite</code> (userData). Large fact sets use several LLM calls (batched facts, then merge); live draft shows below while writing. Export copies final file.
         </p>
         <div class="settings-actions memory-actions">
           <button type="button" id="mem-refresh">Refresh list</button>
@@ -38,6 +38,12 @@
           <button type="button" id="mem-clear" class="danger">Clear all memory</button>
         </div>
         <p id="mem-status" class="settings-card__meta" aria-live="polite"></p>
+
+        <section id="mem-md-preview-card" class="memory-md-preview-card" hidden>
+          <h3 class="memory-section-title">memory.md · live</h3>
+          <p id="mem-md-preview-status" class="memory-md-preview-status" aria-live="polite"></p>
+          <pre id="mem-md-preview-body" class="memory-md-preview-body"></pre>
+        </section>
 
         <hr class="embedding-divider" />
 

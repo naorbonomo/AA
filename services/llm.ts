@@ -314,6 +314,19 @@ export function normalizeAssistantContent(raw: unknown): string | null {
   return String(raw);
 }
 
+/** vLLM / Qwen3: non-streaming body may set `message.content` null and put CoT in `reasoning`. */
+function stringifyReasoningFields(msg: unknown): string | null {
+  if (typeof msg !== "object" || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const k of ["reasoning_content", "reasoning", "thinking"] as const) {
+    const v = m[k];
+    if (typeof v === "string" && v.length) parts.push(v);
+  }
+  const s = parts.join("").trim();
+  return s.length ? s : null;
+}
+
 function pickAssistantText(body: unknown): string {
   if (typeof body !== "object" || body === null) {
     throw new Error("LLM response: expected JSON object");
@@ -323,12 +336,16 @@ function pickAssistantText(body: unknown): string {
     throw new Error("LLM response: missing choices[]");
   }
   const first = choices[0] as {
-    message?: { content?: unknown };
+    message?: { content?: unknown; reasoning?: unknown; reasoning_content?: unknown; thinking?: unknown };
     delta?: { content?: unknown };
   };
   const content =
     first.message?.content !== undefined ? first.message.content : first.delta?.content;
-  const text = normalizeAssistantContent(content);
+  let text = normalizeAssistantContent(content);
+  if (text === null || text === "") {
+    const fromReason = first.message ? stringifyReasoningFields(first.message) : null;
+    if (fromReason) text = fromReason;
+  }
   if (text === null || text === "") {
     throw new Error("LLM response: empty assistant content");
   }
@@ -826,20 +843,25 @@ export async function streamCompletionPost(params: {
   }
 
   const toolCalls = finalizedToolCallsFromAcc(toolAcc);
+  let contentForMessage = contentAcc;
+  if (!contentForMessage.length && (!toolCalls || toolCalls.length === 0)) {
+    contentForMessage = streamedReasoning;
+  }
   const message: CompletionApiMessage & { role: "assistant" } = {
     role: "assistant",
-    content: contentAcc.length ? contentAcc : null,
+    content: contentForMessage.length ? contentForMessage : null,
     ...(toolCalls && toolCalls.length ? { tool_calls: toolCalls } : {}),
   };
 
   const wallMs = Date.now() - started;
   const ulog = lastUsage
-    ? `usage total=${lastUsage.total_tokens ?? "?"} prompt=${lastUsage.prompt_tokens ?? "?"}`
-    : "(no usage in stream)";
+      ? `usage total=${lastUsage.total_tokens ?? "?"} prompt=${lastUsage.prompt_tokens ?? "?"}`
+      : "(no usage in stream)";
   log.info(`streamCompletionPost OK ${wallMs}ms`, {
     finish: lastFinishReason ?? "?",
     hasTools: Boolean(toolCalls?.length),
     contentChars: contentAcc.length,
+    reasoningChars: streamedReasoning.length,
     ulog,
   });
 
