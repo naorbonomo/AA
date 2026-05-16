@@ -459,7 +459,7 @@ async function mergeMemoryMdFragments(
   while (cur.length > 1) {
     round += 1;
     const batches = packFragmentsForMerge(cur);
-    const merged = await mapWithConcurrency(batches, 2, async (batch) => {
+    const merged = await mapWithConcurrency(batches, 1, async (batch) => {
       const user = `${intro}${batch.join(MERGE_FRAGMENT_SEPARATOR)}`;
       const text = await chatCompletion({
         messages: [
@@ -502,7 +502,7 @@ export async function synthesizeMemoryMarkdownFromFacts(
       onProgress?.({ phase: "complete", markdown: text });
       return text;
     }
-    const fragments = await mapWithConcurrency(chunks, 3, async (batch, idx) => {
+    const fragments = await mapWithConcurrency(chunks, 2, async (batch, idx) => {
       const bundle = batch.map(memoryBundleFromFact);
       const frag = await synthesizeMemoryMdChunk(bundle);
       onProgress?.({ phase: "chunk_done", index: idx, total: chunks.length, fragment: frag });
